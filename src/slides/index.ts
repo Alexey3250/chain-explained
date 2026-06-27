@@ -1,9 +1,7 @@
 import type { ComponentType } from "react";
 import Intro from "./01-intro";
 import Problem from "./02-problem";
-import Hashing from "./03-hashing";
-import Inside from "./03b-inside";
-import Why from "./03c-why";
+import Hash from "./03-hash";
 import KeysSlide from "./04-keys";
 import Transactions from "./05-transactions";
 import Blocks from "./06-blocks";
@@ -23,9 +21,7 @@ export type Slide = {
 export const slides: Slide[] = [
   { id: "intro", title: "How does Bitcoin work?", chapter: "Start", Component: Intro },
   { id: "problem", title: "The problem", chapter: "Start", Component: Problem },
-  { id: "hashing", title: "The hash", chapter: "Foundations", Component: Hashing },
-  { id: "inside", title: "Inside the hash", chapter: "Foundations", Component: Inside },
-  { id: "why", title: "Why SHA-256?", chapter: "Foundations", Component: Why },
+  { id: "hash", title: "The hash", chapter: "Foundations", Component: Hash },
   { id: "keys", title: "Keys & signatures", chapter: "Foundations", Component: KeysSlide },
   { id: "transactions", title: "Transactions", chapter: "Money", Component: Transactions },
   { id: "blocks", title: "Blocks", chapter: "Money", Component: Blocks },

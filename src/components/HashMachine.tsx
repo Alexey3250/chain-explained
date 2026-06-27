@@ -1,8 +1,7 @@
 "use client";
 
 import { motion } from "motion/react";
-import { memo, useEffect, useMemo, useState } from "react";
-import { SlideShell } from "@/components/SlideShell";
+import { memo, useEffect, useState } from "react";
 import { Btn, Mono, Panel } from "@/components/ui";
 import {
   add32,
@@ -11,7 +10,6 @@ import {
   ch,
   hex8,
   maj,
-  shaTrace,
   toBits,
   type ShaTrace,
 } from "@/lib/sha256-rounds";
@@ -28,57 +26,10 @@ const TONE: Record<string, string> = {
   grey: "#3a3f50",
 };
 
-export default function Inside() {
-  const [msg, setMsg] = useState("Bitcoin");
-  const [showInside, setShowInside] = useState(false);
-  const trace = useMemo(() => shaTrace(msg), [msg]);
-
-  return (
-    <SlideShell
-      kicker="Foundation · The black box"
-      title="The hash machine — just treat it as a box"
-      lede="You saw what a hash does. This is the machine that makes it, running for real. The trick: you never have to understand the gears. Something goes in, a fingerprint comes out. That's it."
-    >
-      <label className="mb-4 flex items-center gap-2 text-xs text-faint">
-        feed it anything
-        <input
-          value={msg}
-          onChange={(e) => setMsg(e.target.value)}
-          spellCheck={false}
-          maxLength={55}
-          className="w-48 rounded-lg border border-border bg-bg-soft px-3 py-1.5 font-mono text-sm text-fg outline-none focus:border-accent"
-        />
-      </label>
-
-      <BlackBox trace={trace} msg={msg} />
-
-      <button
-        type="button"
-        onClick={() => setShowInside((s) => !s)}
-        className="mt-5 self-start text-sm text-muted underline decoration-dotted underline-offset-4 transition hover:text-accent"
-      >
-        {showInside
-          ? "▴ Hide the gears"
-          : "▾ Curious what those pixels mean? Peek inside the box"}
-      </button>
-
-      {showInside && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="mt-4"
-        >
-          <Layers trace={trace} msg={msg} />
-        </motion.div>
-      )}
-    </SlideShell>
-  );
-}
-
 /* ===================================================================== */
 /*  The black box — pixelated animation                                  */
 /* ===================================================================== */
-function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
+export function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
   const [round, setRound] = useState(0);
   const [playing, setPlaying] = useState(true);
 
@@ -100,7 +51,7 @@ function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
   const done = round >= 64;
 
   return (
-    <div className="flex flex-col items-stretch gap-3 lg:flex-row lg:items-center lg:gap-4">
+    <div className="flex w-full flex-col items-stretch gap-3 lg:flex-row lg:items-center lg:gap-4">
       <Port label="input" tone="blue">
         <div className="font-mono text-sm text-blue break-all">&quot;{msg || " "}&quot;</div>
         <div className="mt-1 text-[0.65rem] text-faint">{trace.msgLen} bytes</div>
@@ -202,7 +153,7 @@ function Arrow() {
 /* ===================================================================== */
 /*  The gears — full algorithm, stacked vertically as layers             */
 /* ===================================================================== */
-function Layers({ trace, msg }: { trace: ShaTrace; msg: string }) {
+export function Gears({ trace, msg }: { trace: ShaTrace; msg: string }) {
   const [round, setRound] = useState(1);
   const [playing, setPlaying] = useState(true);
 
@@ -213,8 +164,7 @@ function Layers({ trace, msg }: { trace: ShaTrace; msg: string }) {
   }, [playing, round]);
 
   return (
-    <Panel className="p-4 sm:p-6">
-      {/* shared round control */}
+    <Panel className="w-full p-4 text-left sm:p-6">
       <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-bg-soft p-3">
         <Btn onClick={() => setPlaying((p) => !p)} className="!py-2">
           {playing ? "⏸" : "▶"}
@@ -251,31 +201,15 @@ function Layers({ trace, msg }: { trace: ShaTrace; msg: string }) {
         <Layer n="01" title="Input" desc="Your message, as raw bytes.">
           <InputLayer trace={trace} msg={msg} />
         </Layer>
-
-        <Layer
-          n="02"
-          title="Padding"
-          desc="Pad to a 512-bit block: the message, a single 1 bit, zeros, then the length."
-        >
+        <Layer n="02" title="Padding" desc="Pad to a 512-bit block: the message, a single 1 bit, zeros, then the length.">
           <PaddingLayer trace={trace} />
         </Layer>
-
-        <Layer
-          n="03"
-          title="Message schedule"
-          desc="The 16 block words are stretched into 64. The highlighted row is the word feeding this round."
-        >
+        <Layer n="03" title="Message schedule" desc="The 16 block words are stretched into 64. The highlighted row is the word feeding this round.">
           <ScheduleLayer trace={trace} current={round - 1} />
         </Layer>
-
-        <Layer
-          n="04"
-          title="Compression"
-          desc="Eight registers (a–h) are mixed 64 times. Here's exactly what this round does."
-        >
+        <Layer n="04" title="Compression" desc="Eight registers (a–h) are mixed 64 times. Here's exactly what this round does.">
           <CompressionLayer trace={trace} round={round} />
         </Layer>
-
         <Layer n="05" title="Output" desc="Add the registers back to the start values, glue them together.">
           <OutputLayer trace={trace} />
         </Layer>
@@ -297,12 +231,8 @@ function Layer({ n, title, desc, children }: { n: string; title: string; desc: s
   );
 }
 
-/* a 32-bit word as a row of bit-pixels */
 function BitRow({
-  word,
-  tone = "accent",
-  prev = null,
-  size = "md",
+  word, tone = "accent", prev = null, size = "md",
 }: {
   word: number;
   tone?: keyof typeof TONE;
@@ -331,7 +261,6 @@ function BitRow({
   );
 }
 
-/* ---------------- 01 Input ---------------- */
 function InputLayer({ trace, msg }: { trace: ShaTrace; msg: string }) {
   const bytes = trace.block.slice(0, trace.msgLen);
   return (
@@ -344,11 +273,7 @@ function InputLayer({ trace, msg }: { trace: ShaTrace; msg: string }) {
       <div className="flex flex-wrap gap-1">
         {bytes.length === 0 && <span className="text-xs text-faint">(empty)</span>}
         {bytes.map((b, i) => (
-          <span
-            key={i}
-            className="rounded bg-blue/15 px-1.5 py-0.5 font-mono text-xs text-blue"
-            title={`'${msg[i] ?? ""}'`}
-          >
+          <span key={i} className="rounded bg-blue/15 px-1.5 py-0.5 font-mono text-xs text-blue" title={`'${msg[i] ?? ""}'`}>
             {b.toString(16).padStart(2, "0")}
           </span>
         ))}
@@ -357,7 +282,6 @@ function InputLayer({ trace, msg }: { trace: ShaTrace; msg: string }) {
   );
 }
 
-/* ---------------- 02 Padding ---------------- */
 function PaddingLayer({ trace }: { trace: ShaTrace }) {
   const roleColor = (i: number) => {
     if (i < trace.msgLen) return "blue";
@@ -375,13 +299,7 @@ function PaddingLayer({ trace }: { trace: ShaTrace }) {
               {bits.map((bit, p) => {
                 const byte = Math.floor((r * 32 + p) / 8);
                 const color = TONE[roleColor(byte)];
-                return (
-                  <span
-                    key={p}
-                    className="h-2 w-2"
-                    style={{ background: bit ? color : `${color}22` }}
-                  />
-                );
+                return <span key={p} className="h-2 w-2" style={{ background: bit ? color : `${color}22` }} />;
               })}
             </div>
           );
@@ -397,12 +315,8 @@ function PaddingLayer({ trace }: { trace: ShaTrace }) {
   );
 }
 
-/* ---------------- 03 Message schedule ---------------- */
 const ScheduleRow = memo(function ScheduleRow({
-  word,
-  index,
-  fromMsg,
-  active,
+  word, index, fromMsg, active,
 }: {
   word: number;
   index: number;
@@ -411,18 +325,12 @@ const ScheduleRow = memo(function ScheduleRow({
 }) {
   return (
     <div
-      className={`flex items-center gap-2 rounded px-1 ${
-        active ? "bg-accent/15 ring-1 ring-accent" : ""
-      }`}
+      className={`flex items-center gap-2 rounded px-1 ${active ? "bg-accent/15 ring-1 ring-accent" : ""}`}
       title={`W${index} = ${hex8(word)}`}
     >
-      <span className="w-7 shrink-0 text-right font-mono text-[0.6rem] text-faint">
-        w{index}
-      </span>
+      <span className="w-7 shrink-0 text-right font-mono text-[0.6rem] text-faint">w{index}</span>
       <BitRow word={word} tone={fromMsg ? "blue" : "accent"} size="sm" />
-      <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">
-        {hex8(word)}
-      </Mono>
+      <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">{hex8(word)}</Mono>
     </div>
   );
 });
@@ -432,12 +340,10 @@ function ScheduleLayer({ trace, current }: { trace: ShaTrace; current: number })
     <div className="space-y-[3px]">
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6rem] text-faint">
         <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5" style={{ background: TONE.blue }} /> from your
-          message (w0–w15)
+          <span className="h-2.5 w-2.5" style={{ background: TONE.blue }} /> from your message (w0–w15)
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5" style={{ background: TONE.accent }} /> computed
-          from earlier words (w16–w63)
+          <span className="h-2.5 w-2.5" style={{ background: TONE.accent }} /> computed from earlier words (w16–w63)
         </span>
         <span className="inline-flex items-center gap-1">
           <span className="h-2.5 w-2.5 ring-1 ring-accent" /> this round&apos;s word
@@ -453,9 +359,8 @@ function ScheduleLayer({ trace, current }: { trace: ShaTrace; current: number })
   );
 }
 
-/* ---------------- 04 Compression ---------------- */
 function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) {
-  const t = round - 1; // 0-based round index
+  const t = round - 1;
   const prev = trace.states[round - 1];
   const cur = trace.states[round];
   const [a, b, c, , e, f, g, h] = prev;
@@ -469,7 +374,6 @@ function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) 
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      {/* the math for this round */}
       <div className="space-y-1.5 font-mono text-xs">
         <MathRow label="Σ₁(e)" val={s1} tone="green" />
         <MathRow label="Ch(e,f,g)" val={chv} tone="green" />
@@ -482,20 +386,13 @@ function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) 
         <MathRow label="= T2" val={t2} tone="accent" strong />
       </div>
 
-      {/* registers before → after */}
       <div className="space-y-1">
         <div className="mb-1.5 text-[0.65rem] uppercase tracking-widest text-faint">
           registers after round {round}
         </div>
         <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6rem] text-faint">
           <span className="inline-flex items-center gap-1">
-            <span
-              className="h-2.5 w-2.5"
-              style={{
-                background: "var(--accent)",
-                boxShadow: "0 0 5px 1px rgba(247,147,26,0.85)",
-              }}
-            />
+            <span className="h-2.5 w-2.5" style={{ background: "var(--accent)", boxShadow: "0 0 5px 1px rgba(247,147,26,0.85)" }} />
             a glowing square = a bit that just flipped
           </span>
         </div>
@@ -503,54 +400,32 @@ function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) 
           const fresh = i === 0 || i === 4;
           return (
             <div key={label} className="flex items-center gap-2">
-              <span className={`w-3 font-mono text-xs ${fresh ? "text-accent" : "text-faint"}`}>
-                {label}
-              </span>
+              <span className={`w-3 font-mono text-xs ${fresh ? "text-accent" : "text-faint"}`}>{label}</span>
               <BitRow word={cur[i]} tone="accent" prev={prev[i]} size="sm" />
-              <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">
-                {hex8(cur[i])}
-              </Mono>
-              {fresh && (
-                <span className="text-[0.55rem] font-semibold text-accent">
-                  ← recomputed
-                </span>
-              )}
+              <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">{hex8(cur[i])}</Mono>
+              {fresh && <span className="text-[0.55rem] font-semibold text-accent">← recomputed</span>}
             </div>
           );
         })}
         <p className="pt-1.5 text-[0.65rem] text-muted">
           Only <span className="font-mono text-accent">a</span> and{" "}
-          <span className="font-mono text-accent">e</span> are freshly built each
-          round (a = T1+T2, e = d+T1). The other six just shift down one slot —
-          so most of what changes is really the new a and e rippling through.
+          <span className="font-mono text-accent">e</span> are freshly built each round (a = T1+T2, e = d+T1).
+          The other six just shift down one slot.
         </p>
       </div>
     </div>
   );
 }
 
-function MathRow({
-  label,
-  val,
-  tone,
-  strong = false,
-}: {
-  label: string;
-  val: number;
-  tone: keyof typeof TONE;
-  strong?: boolean;
-}) {
+function MathRow({ label, val, tone, strong = false }: { label: string; val: number; tone: keyof typeof TONE; strong?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <span className={`text-faint ${strong ? "font-bold text-fg" : ""}`}>{label}</span>
-      <span style={{ color: TONE[tone] }} className={strong ? "font-bold" : ""}>
-        {hex8(val)}
-      </span>
+      <span style={{ color: TONE[tone] }} className={strong ? "font-bold" : ""}>{hex8(val)}</span>
     </div>
   );
 }
 
-/* ---------------- 05 Output ---------------- */
 function OutputLayer({ trace }: { trace: ShaTrace }) {
   return (
     <div>
@@ -559,20 +434,14 @@ function OutputLayer({ trace }: { trace: ShaTrace }) {
           <div
             key={i}
             className="rounded-lg px-2.5 py-2 font-mono text-sm font-semibold"
-            style={{
-              background: `${CHUNK_TONES[i]}22`,
-              border: `1px solid ${CHUNK_TONES[i]}`,
-              color: CHUNK_TONES[i],
-            }}
+            style={{ background: `${CHUNK_TONES[i]}22`, border: `1px solid ${CHUNK_TONES[i]}`, color: CHUNK_TONES[i] }}
           >
             {hex8(w)}
           </div>
         ))}
       </div>
       <div className="mt-4 rounded-xl border border-green/40 bg-green/10 p-4">
-        <div className="text-[0.7rem] uppercase tracking-widest text-green">
-          the SHA-256 fingerprint
-        </div>
+        <div className="text-[0.7rem] uppercase tracking-widest text-green">the SHA-256 fingerprint</div>
         <div className="mt-1 break-all font-mono text-sm text-green">{trace.digest}</div>
       </div>
     </div>
