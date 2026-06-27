@@ -47,6 +47,14 @@ export type ShaTrace = {
   digest: string;
   /** true if the message had to be truncated to fit one block. */
   truncated: boolean;
+  /** the padded 512-bit block, as 64 bytes. */
+  block: number[];
+  /** number of bytes of the (possibly truncated) message. */
+  msgLen: number;
+  /** the 8 initial hash values. */
+  iv: number[];
+  /** the 8 final 32-bit words whose hex makes up the digest. */
+  finalWords: number[];
 };
 
 function padBlock(msg: string): { block: Uint8Array; truncated: boolean } {
@@ -104,7 +112,19 @@ export function shaTrace(msg: string): ShaTrace {
     .map((w) => w.toString(16).padStart(8, "0"))
     .join("");
 
-  return { states, W, K: K.slice(), digest, truncated };
+  const msgLen = Math.min(new TextEncoder().encode(msg).length, 55);
+
+  return {
+    states,
+    W,
+    K: K.slice(),
+    digest,
+    truncated,
+    block: Array.from(block),
+    msgLen,
+    iv: IV.slice(),
+    finalWords,
+  };
 }
 
 /** Expand a 32-bit word into 32 bits, most-significant first. */
