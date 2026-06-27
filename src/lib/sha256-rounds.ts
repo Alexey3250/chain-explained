@@ -27,10 +27,15 @@ const IV = [
 const rotr = (x: number, n: number) => ((x >>> n) | (x << (32 - n))) >>> 0;
 const add = (...xs: number[]) => xs.reduce((s, x) => s + x, 0) >>> 0;
 
-const bigSig0 = (x: number) => rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22);
-const bigSig1 = (x: number) => rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25);
-const ch = (e: number, f: number, g: number) => (e & f) ^ (~e & g);
-const maj = (a: number, b: number, c: number) => (a & b) ^ (a & c) ^ (b & c);
+export const bigSig0 = (x: number) =>
+  (rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22)) >>> 0;
+export const bigSig1 = (x: number) =>
+  (rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25)) >>> 0;
+export const ch = (e: number, f: number, g: number) =>
+  ((e & f) ^ (~e & g)) >>> 0;
+export const maj = (a: number, b: number, c: number) =>
+  ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+export const add32 = (...xs: number[]) => add(...xs);
 const smallSig0 = (x: number) => rotr(x, 7) ^ rotr(x, 18) ^ (x >>> 3);
 const smallSig1 = (x: number) => rotr(x, 17) ^ rotr(x, 19) ^ (x >>> 10);
 

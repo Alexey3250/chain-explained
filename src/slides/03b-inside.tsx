@@ -1,21 +1,36 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { SlideShell } from "@/components/SlideShell";
-import { Btn, Mono, Panel, Pill } from "@/components/ui";
-import { hex8, shaTrace, toBits, type ShaTrace } from "@/lib/sha256-rounds";
+import { Btn, Mono, Panel } from "@/components/ui";
+import {
+  add32,
+  bigSig0,
+  bigSig1,
+  ch,
+  hex8,
+  maj,
+  shaTrace,
+  toBits,
+  type ShaTrace,
+} from "@/lib/sha256-rounds";
 
 const LABELS = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const CHUNK_TONES = [
   "#f7931a", "#60a5fa", "#36d399", "#a78bfa",
   "#f87272", "#fbbf24", "#34d399", "#f472b6",
 ];
+const TONE: Record<string, string> = {
+  accent: "var(--accent)",
+  blue: "var(--blue)",
+  green: "var(--green)",
+  grey: "#3a3f50",
+};
 
 export default function Inside() {
   const [msg, setMsg] = useState("Bitcoin");
   const [showInside, setShowInside] = useState(false);
-
   const trace = useMemo(() => shaTrace(msg), [msg]);
 
   return (
@@ -49,11 +64,11 @@ export default function Inside() {
 
       {showInside && (
         <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           className="mt-4"
         >
-          <InsideWalkthrough trace={trace} msg={msg} />
+          <Layers trace={trace} msg={msg} />
         </motion.div>
       )}
     </SlideShell>
@@ -61,13 +76,12 @@ export default function Inside() {
 }
 
 /* ===================================================================== */
-/*  The black box — pixelated animation (the main event)                 */
+/*  The black box — pixelated animation                                  */
 /* ===================================================================== */
 function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
   const [round, setRound] = useState(0);
   const [playing, setPlaying] = useState(true);
 
-  // loop forever: churn 0→64, hold on the result, restart
   useEffect(() => {
     if (!playing) return;
     if (round >= 64) {
@@ -81,23 +95,17 @@ function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
   const idx = Math.min(round, 64);
   const cur = trace.states[idx];
   const prev = idx > 0 ? trace.states[idx - 1] : null;
-  const bits = cur.flatMap((w) => toBits(w)); // 256 bits
+  const bits = cur.flatMap((w) => toBits(w));
   const prevBits = prev ? prev.flatMap((w) => toBits(w)) : null;
   const done = round >= 64;
 
   return (
     <div className="flex flex-col items-stretch gap-3 lg:flex-row lg:items-center lg:gap-4">
-      {/* INPUT */}
       <Port label="input" tone="blue">
-        <div className="font-mono text-sm text-blue break-all">
-          &quot;{msg || " "}&quot;
-        </div>
+        <div className="font-mono text-sm text-blue break-all">&quot;{msg || " "}&quot;</div>
         <div className="mt-1 text-[0.65rem] text-faint">{trace.msgLen} bytes</div>
       </Port>
-
       <Arrow />
-
-      {/* THE BOX */}
       <div
         className="relative mx-auto shrink-0 overflow-hidden rounded-lg border-2 border-accent/50 bg-[#08090d]"
         style={{
@@ -105,27 +113,15 @@ function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
             "0 0 50px -10px rgba(247,147,26,0.45), inset 0 0 30px -12px rgba(247,147,26,0.4)",
         }}
       >
-        {/* title bar */}
         <div className="flex items-center justify-between border-b border-accent/30 bg-accent/10 px-3 py-1.5">
-          <span className="font-mono text-xs font-bold tracking-widest text-accent">
-            SHA-256
-          </span>
+          <span className="font-mono text-xs font-bold tracking-widest text-accent">SHA-256</span>
           <span className="flex items-center gap-1.5 font-mono text-[0.65rem] text-faint">
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${
-                done ? "bg-green" : "animate-pulse bg-accent"
-              }`}
-            />
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${done ? "bg-green" : "animate-pulse bg-accent"}`} />
             {done ? "done" : `${round.toString().padStart(2, "0")}/64`}
           </span>
         </div>
-
-        {/* pixel grid */}
         <div className="relative p-3">
-          <div
-            className="grid gap-[2px]"
-            style={{ gridTemplateColumns: "repeat(16, 1fr)" }}
-          >
+          <div className="grid gap-[2px]" style={{ gridTemplateColumns: "repeat(16, 1fr)" }}>
             {bits.map((bit, i) => {
               const changed = prevBits && prevBits[i] !== bit;
               return (
@@ -134,15 +130,12 @@ function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
                   className="h-2.5 w-2.5 transition-colors duration-150"
                   style={{
                     background: bit ? "var(--accent)" : "#15171f",
-                    boxShadow: changed
-                      ? "0 0 5px 1px rgba(247,147,26,0.9)"
-                      : undefined,
+                    boxShadow: changed ? "0 0 5px 1px rgba(247,147,26,0.9)" : undefined,
                   }}
                 />
               );
             })}
           </div>
-          {/* scanline overlay for the retro feel */}
           <div
             className="pointer-events-none absolute inset-0"
             style={{
@@ -152,10 +145,7 @@ function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
           />
         </div>
       </div>
-
       <Arrow />
-
-      {/* OUTPUT */}
       <Port label="output" tone={done ? "green" : "muted"}>
         {done ? (
           <motion.div
@@ -173,12 +163,10 @@ function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
         )}
         <div className="mt-1 text-[0.65rem] text-faint">256-bit fingerprint</div>
       </Port>
-
-      {/* tiny pause control, floated under the box on wide screens */}
       <button
         type="button"
         onClick={() => setPlaying((p) => !p)}
-        className="self-center font-mono text-[0.7rem] text-faint underline decoration-dotted underline-offset-2 hover:text-accent lg:absolute lg:bottom-0 lg:left-1/2"
+        className="self-center font-mono text-[0.7rem] text-faint underline decoration-dotted underline-offset-2 hover:text-accent"
         aria-label={playing ? "Pause animation" : "Play animation"}
       >
         {playing ? "❚❚ pause" : "▶ play"}
@@ -187,28 +175,11 @@ function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
   );
 }
 
-function Port({
-  label,
-  tone,
-  children,
-}: {
-  label: string;
-  tone: "blue" | "green" | "muted";
-  children: React.ReactNode;
-}) {
-  const border =
-    tone === "blue"
-      ? "border-blue/30"
-      : tone === "green"
-        ? "border-green/40"
-        : "border-border";
+function Port({ label, tone, children }: { label: string; tone: "blue" | "green" | "muted"; children: React.ReactNode }) {
+  const border = tone === "blue" ? "border-blue/30" : tone === "green" ? "border-green/40" : "border-border";
   return (
-    <div
-      className={`flex-1 rounded-lg border ${border} bg-panel/50 p-3 lg:max-w-[200px]`}
-    >
-      <div className="mb-1 text-[0.6rem] uppercase tracking-widest text-faint">
-        {label}
-      </div>
+    <div className={`flex-1 rounded-lg border ${border} bg-panel/50 p-3 lg:max-w-[200px]`}>
+      <div className="mb-1 text-[0.6rem] uppercase tracking-widest text-faint">{label}</div>
       {children}
     </div>
   );
@@ -229,298 +200,320 @@ function Arrow() {
 }
 
 /* ===================================================================== */
-/*  Collapsible 4-stage walkthrough (for the curious)                    */
+/*  The gears — full algorithm, stacked vertically as layers             */
 /* ===================================================================== */
-const STAGES = [
-  {
-    key: "pad",
-    tab: "1 · Pad",
-    title: "Pack the message into a fixed box",
-    caption:
-      "SHA-256 only works on 512-bit (64-byte) blocks. We drop in your message, mark its end with a single 1, fill the rest with zeros, and write the length at the very end.",
-  },
-  {
-    key: "schedule",
-    tab: "2 · Schedule",
-    title: "Stretch it into 64 words",
-    caption:
-      "The block is cut into 16 words, then mixed into 48 more — 64 total — so every round of stirring gets fresh material and your message spreads everywhere.",
-  },
-  {
-    key: "mix",
-    tab: "3 · Mix ×64",
-    title: "Stir eight buckets, 64 times",
-    caption:
-      "Eight registers (a–h) get scrambled 64 times. Each round folds in one scheduled word + one constant. It's meant to look like random noise — that's diffusion doing its job.",
-  },
-  {
-    key: "final",
-    tab: "4 · Fingerprint",
-    title: "Glue the buckets together",
-    caption:
-      "Add the stirred buckets back to the starting values and line them up. Those eight chunks, side by side, are your 256-bit fingerprint.",
-  },
-];
-
-function InsideWalkthrough({ trace, msg }: { trace: ShaTrace; msg: string }) {
-  const [stage, setStage] = useState(0);
-  const [round, setRound] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(130);
-
-  function goStage(i: number) {
-    setStage(i);
-    if (i === 2) {
-      setRound(0);
-      setPlaying(true);
-    }
-  }
+function Layers({ trace, msg }: { trace: ShaTrace; msg: string }) {
+  const [round, setRound] = useState(1);
+  const [playing, setPlaying] = useState(true);
 
   useEffect(() => {
     if (!playing || round >= 64) return;
-    const id = setTimeout(() => setRound((r) => Math.min(64, r + 1)), speed);
+    const id = setTimeout(() => setRound((r) => Math.min(64, r + 1)), 600);
     return () => clearTimeout(id);
-  }, [playing, round, speed]);
+  }, [playing, round]);
 
   return (
-    <Panel className="p-4">
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        {STAGES.map((s, i) => (
-          <button
-            key={s.key}
-            type="button"
-            onClick={() => goStage(i)}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-              i === stage
-                ? "border-accent bg-accent/15 text-accent"
-                : "border-border text-muted hover:bg-panel-2"
-            }`}
-          >
-            {s.tab}
-          </button>
-        ))}
-      </div>
-
-      <div className="min-h-[230px]">
-        {stage === 0 && <PadStage trace={trace} msg={msg} />}
-        {stage === 1 && <ScheduleStage trace={trace} />}
-        {stage === 2 && (
-          <MixStage
-            trace={trace}
-            round={round}
-            playing={playing}
-            speed={speed}
-            setPlaying={setPlaying}
-            setSpeed={setSpeed}
-            step={() => {
-              setPlaying(false);
-              setRound((r) => Math.min(64, r + 1));
-            }}
-            replay={() => {
-              setRound(0);
-              setPlaying(true);
-            }}
-          />
-        )}
-        {stage === 3 && <FinalStage trace={trace} />}
-      </div>
-
-      <div className="mt-3 rounded-xl border border-accent/25 bg-accent/5 p-3 text-sm text-pretty text-muted">
-        <span className="font-semibold text-accent">{STAGES[stage].title}. </span>
-        {STAGES[stage].caption}
-      </div>
-
-      <div className="mt-3 flex items-center justify-between">
-        <Btn variant="ghost" onClick={() => goStage(Math.max(0, stage - 1))} disabled={stage === 0}>
-          ◂ Back
+    <Panel className="p-4 sm:p-6">
+      {/* shared round control */}
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-bg-soft p-3">
+        <Btn onClick={() => setPlaying((p) => !p)} className="!py-2">
+          {playing ? "⏸" : "▶"}
         </Btn>
-        <span className="font-mono text-xs text-faint">step {stage + 1} / 4</span>
-        <Btn onClick={() => goStage(Math.min(3, stage + 1))} disabled={stage === 3}>
-          Next ▸
-        </Btn>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-sm text-accent">round {round}</span>
+          <span className="font-mono text-xs text-faint">/ 64</span>
+        </div>
+        <input
+          type="range"
+          min={1}
+          max={64}
+          value={round}
+          onChange={(e) => {
+            setPlaying(false);
+            setRound(Number(e.target.value));
+          }}
+          className="flex-1 accent-[var(--accent)]"
+        />
+      </div>
+
+      <div className="space-y-8">
+        <Layer n="01" title="Input" desc="Your message, as raw bytes.">
+          <InputLayer trace={trace} msg={msg} />
+        </Layer>
+
+        <Layer
+          n="02"
+          title="Padding"
+          desc="Pad to a 512-bit block: the message, a single 1 bit, zeros, then the length."
+        >
+          <PaddingLayer trace={trace} />
+        </Layer>
+
+        <Layer
+          n="03"
+          title="Message schedule"
+          desc="The 16 block words are stretched into 64. The highlighted row is the word feeding this round."
+        >
+          <ScheduleLayer trace={trace} current={round - 1} />
+        </Layer>
+
+        <Layer
+          n="04"
+          title="Compression"
+          desc="Eight registers (a–h) are mixed 64 times. Here's exactly what this round does."
+        >
+          <CompressionLayer trace={trace} round={round} />
+        </Layer>
+
+        <Layer n="05" title="Output" desc="Add the registers back to the start values, glue them together.">
+          <OutputLayer trace={trace} />
+        </Layer>
       </div>
     </Panel>
   );
 }
 
-/* ---------------- Stage 1: padding ---------------- */
-function PadStage({ trace, msg }: { trace: ShaTrace; msg: string }) {
-  const byteRole = (i: number) => {
-    if (i < trace.msgLen) return "msg";
-    if (i === trace.msgLen) return "one";
-    if (i >= 56) return "len";
-    return "zero";
-  };
-  const colors: Record<string, string> = {
-    msg: "var(--blue)",
-    one: "var(--accent)",
-    len: "var(--green)",
-    zero: "var(--panel-2)",
-  };
+function Layer({ n, title, desc, children }: { n: string; title: string; desc: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="mb-3 text-xs text-muted">
-        <Mono tone="blue">&quot;{msg || " "}&quot;</Mono> = {trace.msgLen} bytes →
-        padded to 64 bytes
+    <section className="border-l-2 border-accent/30 pl-4">
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-sm font-bold text-accent">{n}</span>
+        <h3 className="text-lg font-semibold">{title}</h3>
       </div>
-      <div className="grid grid-cols-8 gap-1 sm:gap-1.5" style={{ maxWidth: 460 }}>
-        {trace.block.map((b, i) => {
-          const role = byteRole(i);
-          return (
-            <div
-              key={i}
-              className="flex aspect-square items-center justify-center rounded-[4px] font-mono text-[0.6rem] sm:text-xs"
-              style={{
-                background: colors[role],
-                color: role === "zero" ? "var(--faint)" : "#0b0c10",
-                fontWeight: role === "zero" ? 400 : 700,
-              }}
-            >
-              {b.toString(16).padStart(2, "0")}
-            </div>
-          );
-        })}
+      <p className="mb-3 mt-0.5 max-w-2xl text-xs text-muted">{desc}</p>
+      <div className="overflow-x-auto scroll-thin">{children}</div>
+    </section>
+  );
+}
+
+/* a 32-bit word as a row of bit-pixels */
+function BitRow({
+  word,
+  tone = "accent",
+  prev = null,
+  size = "md",
+}: {
+  word: number;
+  tone?: keyof typeof TONE;
+  prev?: number | null;
+  size?: "sm" | "md";
+}) {
+  const bits = toBits(word);
+  const pb = prev != null ? toBits(prev) : null;
+  const cls = size === "sm" ? "h-2 w-2" : "h-3 w-3";
+  return (
+    <div className="flex gap-[2px]">
+      {bits.map((b, i) => {
+        const changed = pb && pb[i] !== b;
+        return (
+          <span
+            key={i}
+            className={cls}
+            style={{
+              background: b ? TONE[tone] : "#15171f",
+              boxShadow: changed ? "0 0 5px 1px rgba(247,147,26,0.85)" : undefined,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- 01 Input ---------------- */
+function InputLayer({ trace, msg }: { trace: ShaTrace; msg: string }) {
+  const bytes = trace.block.slice(0, trace.msgLen);
+  return (
+    <div className="space-y-2">
+      <div className="font-mono text-sm">
+        <span className="text-faint">text: </span>
+        <span className="text-blue">&quot;{msg || " "}&quot;</span>
+        <span className="ml-2 text-faint">({trace.msgLen} bytes)</span>
       </div>
-      <div className="mt-3 flex flex-wrap gap-3 text-xs">
-        <Legend color="var(--blue)" label="your message" />
-        <Legend color="var(--accent)" label="the “1” marker" />
-        <Legend color="var(--panel-2)" label="zero padding" dim />
-        <Legend color="var(--green)" label="length in bits" />
+      <div className="flex flex-wrap gap-1">
+        {bytes.length === 0 && <span className="text-xs text-faint">(empty)</span>}
+        {bytes.map((b, i) => (
+          <span
+            key={i}
+            className="rounded bg-blue/15 px-1.5 py-0.5 font-mono text-xs text-blue"
+            title={`'${msg[i] ?? ""}'`}
+          >
+            {b.toString(16).padStart(2, "0")}
+          </span>
+        ))}
       </div>
     </div>
   );
 }
 
-/* ---------------- Stage 2: message schedule ---------------- */
-function ScheduleStage({ trace }: { trace: ShaTrace }) {
+/* ---------------- 02 Padding ---------------- */
+function PaddingLayer({ trace }: { trace: ShaTrace }) {
+  const roleColor = (i: number) => {
+    if (i < trace.msgLen) return "blue";
+    if (i === trace.msgLen) return "accent";
+    if (i >= 56) return "green";
+    return "grey";
+  };
   return (
-    <div>
-      <div className="mb-3 text-xs text-muted">
-        16 words from your block → expanded to 64 words
-      </div>
-      <div className="grid grid-cols-8 gap-1 sm:gap-1.5" style={{ maxWidth: 500 }}>
-        {trace.W.map((w, i) => {
-          const fromMsg = i < 16;
+    <div className="space-y-1.5">
+      <div className="space-y-[2px]">
+        {Array.from({ length: 16 }).map((_, r) => {
+          const bits = toBits(trace.W[r]);
           return (
-            <motion.div
-              key={i}
-              initial={fromMsg ? false : { opacity: 0, scale: 0.6 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: fromMsg ? 0 : (i - 16) * 0.012, duration: 0.3 }}
-              className="flex aspect-square items-center justify-center rounded-[4px] font-mono"
-              style={{
-                background: fromMsg ? "var(--blue)" : "var(--accent-dim)",
-                border: fromMsg ? "none" : "1px solid var(--accent)",
-                color: fromMsg ? "#0b0c10" : "var(--accent)",
-              }}
-              title={`W${i} = ${hex8(w)}`}
-            >
-              <span className="text-[0.55rem] opacity-70">w{i}</span>
-            </motion.div>
+            <div key={r} className="flex gap-[2px]">
+              {bits.map((bit, p) => {
+                const byte = Math.floor((r * 32 + p) / 8);
+                const color = TONE[roleColor(byte)];
+                return (
+                  <span
+                    key={p}
+                    className="h-2 w-2"
+                    style={{ background: bit ? color : `${color}22` }}
+                  />
+                );
+              })}
+            </div>
           );
         })}
       </div>
-      <p className="mt-3 font-mono text-[0.7rem] text-faint">
-        each new word = σ₁(wₜ₋₂) + wₜ₋₇ + σ₀(wₜ₋₁₅) + wₜ₋₁₆
+      <div className="flex flex-wrap gap-3 pt-1 text-xs">
+        <Legend color={TONE.blue} label="message" />
+        <Legend color={TONE.accent} label="the “1” marker" />
+        <Legend color={TONE.grey} label="zero padding" />
+        <Legend color={TONE.green} label="length" />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- 03 Message schedule ---------------- */
+const ScheduleRow = memo(function ScheduleRow({
+  word,
+  index,
+  fromMsg,
+  active,
+}: {
+  word: number;
+  index: number;
+  fromMsg: boolean;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-2 rounded px-1 ${
+        active ? "bg-accent/15 ring-1 ring-accent" : ""
+      }`}
+      title={`W${index} = ${hex8(word)}`}
+    >
+      <span className="w-7 shrink-0 text-right font-mono text-[0.6rem] text-faint">
+        w{index}
+      </span>
+      <BitRow word={word} tone={fromMsg ? "blue" : "accent"} size="sm" />
+      <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">
+        {hex8(word)}
+      </Mono>
+    </div>
+  );
+});
+
+function ScheduleLayer({ trace, current }: { trace: ShaTrace; current: number }) {
+  return (
+    <div className="space-y-[3px]">
+      {trace.W.map((w, i) => (
+        <ScheduleRow key={i} word={w} index={i} fromMsg={i < 16} active={i === current} />
+      ))}
+      <p className="pt-2 font-mono text-[0.7rem] text-faint">
+        wₜ = σ₁(wₜ₋₂) + wₜ₋₇ + σ₀(wₜ₋₁₅) + wₜ₋₁₆
       </p>
     </div>
   );
 }
 
-/* ---------------- Stage 3: the mix ---------------- */
-function MixStage({
-  trace, round, playing, speed, setPlaying, setSpeed, step, replay,
-}: {
-  trace: ShaTrace;
-  round: number;
-  playing: boolean;
-  speed: number;
-  setPlaying: (f: (p: boolean) => boolean) => void;
-  setSpeed: (n: number) => void;
-  step: () => void;
-  replay: () => void;
-}) {
+/* ---------------- 04 Compression ---------------- */
+function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) {
+  const t = round - 1; // 0-based round index
+  const prev = trace.states[round - 1];
   const cur = trace.states[round];
-  const prev = round > 0 ? trace.states[round - 1] : null;
-  const done = round >= 64;
+  const [a, b, c, , e, f, g, h] = prev;
+
+  const s1 = bigSig1(e);
+  const chv = ch(e, f, g);
+  const t1 = add32(h, s1, chv, trace.K[t], trace.W[t]);
+  const s0 = bigSig0(a);
+  const mj = maj(a, b, c);
+  const t2 = add32(s0, mj);
 
   return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <Pill tone={done ? "green" : "accent"}>
-          {done ? "✓ all 64 rounds done" : `round ${round} / 64`}
-        </Pill>
-        {!done && round > 0 && (
-          <span className="font-mono text-xs text-faint">
-            mixing in word <span className="text-accent">{hex8(trace.W[round - 1])}</span>
-          </span>
-        )}
+    <div className="grid gap-5 lg:grid-cols-2">
+      {/* the math for this round */}
+      <div className="space-y-1.5 font-mono text-xs">
+        <MathRow label="Σ₁(e)" val={s1} tone="green" />
+        <MathRow label="Ch(e,f,g)" val={chv} tone="green" />
+        <MathRow label="+ Kₜ" val={trace.K[t]} tone="blue" />
+        <MathRow label="+ Wₜ" val={trace.W[t]} tone="accent" />
+        <MathRow label="= T1" val={t1} tone="accent" strong />
+        <div className="h-1" />
+        <MathRow label="Σ₀(a)" val={s0} tone="green" />
+        <MathRow label="Maj(a,b,c)" val={mj} tone="green" />
+        <MathRow label="= T2" val={t2} tone="accent" strong />
       </div>
-      <div className="overflow-x-auto scroll-thin">
-        <div className="min-w-[500px] space-y-1">
-          {LABELS.map((label, i) => {
-            const bits = toBits(cur[i]);
-            const pbits = prev ? toBits(prev[i]) : null;
-            const fresh = (i === 0 || i === 4) && !done;
-            return (
-              <div key={label} className="flex items-center gap-2">
-                <span className={`w-3 font-mono text-sm ${fresh ? "text-accent" : "text-faint"}`}>
-                  {label}
-                </span>
-                <div className="flex gap-[2px]">
-                  {bits.map((bit, j) => {
-                    const changed = pbits && pbits[j] !== bit;
-                    return (
-                      <span
-                        key={j}
-                        className="h-3.5 w-3.5 rounded-[2px] transition-colors duration-200"
-                        style={{
-                          background: bit ? "var(--accent)" : "var(--panel-2)",
-                          boxShadow: changed ? "0 0 6px 1px rgba(247,147,26,0.8)" : undefined,
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-                <Mono tone="muted" className="ml-1 hidden sm:inline">{hex8(cur[i])}</Mono>
-              </div>
-            );
-          })}
+
+      {/* registers before → after */}
+      <div className="space-y-1">
+        <div className="mb-1 text-[0.65rem] uppercase tracking-widest text-faint">
+          registers after round {round}
         </div>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Btn onClick={() => (done ? replay() : setPlaying((p) => !p))}>
-          {done ? "↻ Replay" : playing ? "⏸ Pause" : "▶ Play"}
-        </Btn>
-        <Btn variant="ghost" onClick={step} disabled={done}>Step ▸</Btn>
-        <div className="ml-auto flex items-center gap-2 text-xs text-faint">
-          slow
-          <input
-            type="range" min={30} max={400} value={430 - speed}
-            onChange={(e) => setSpeed(430 - Number(e.target.value))}
-            className="accent-[var(--accent)]"
-          />
-          fast
-        </div>
+        {LABELS.map((label, i) => {
+          const fresh = i === 0 || i === 4;
+          return (
+            <div key={label} className="flex items-center gap-2">
+              <span className={`w-3 font-mono text-xs ${fresh ? "text-accent" : "text-faint"}`}>
+                {label}
+              </span>
+              <BitRow word={cur[i]} tone={fresh ? "accent" : "grey"} prev={prev[i]} size="sm" />
+              <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">
+                {hex8(cur[i])}
+              </Mono>
+            </div>
+          );
+        })}
+        <p className="pt-1.5 font-mono text-[0.65rem] text-faint">
+          new a = T1 + T2 &nbsp;·&nbsp; new e = d + T1 &nbsp;·&nbsp; rest shift down
+        </p>
       </div>
     </div>
   );
 }
 
-/* ---------------- Stage 4: final digest ---------------- */
-function FinalStage({ trace }: { trace: ShaTrace }) {
+function MathRow({
+  label,
+  val,
+  tone,
+  strong = false,
+}: {
+  label: string;
+  val: number;
+  tone: keyof typeof TONE;
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className={`text-faint ${strong ? "font-bold text-fg" : ""}`}>{label}</span>
+      <span style={{ color: TONE[tone] }} className={strong ? "font-bold" : ""}>
+        {hex8(val)}
+      </span>
+    </div>
+  );
+}
+
+/* ---------------- 05 Output ---------------- */
+function OutputLayer({ trace }: { trace: ShaTrace }) {
   return (
     <div>
-      <div className="mb-3 text-xs text-muted">
-        8 final words → concatenated into 64 hex characters
-      </div>
       <div className="flex flex-wrap gap-2">
         {trace.finalWords.map((w, i) => (
-          <motion.div
+          <div
             key={i}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08, duration: 0.4 }}
             className="rounded-lg px-2.5 py-2 font-mono text-sm font-semibold"
             style={{
               background: `${CHUNK_TONES[i]}22`,
@@ -529,7 +522,7 @@ function FinalStage({ trace }: { trace: ShaTrace }) {
             }}
           >
             {hex8(w)}
-          </motion.div>
+          </div>
         ))}
       </div>
       <div className="mt-4 rounded-xl border border-green/40 bg-green/10 p-4">
@@ -542,11 +535,10 @@ function FinalStage({ trace }: { trace: ShaTrace }) {
   );
 }
 
-/* ---------------- shared ---------------- */
-function Legend({ color, label, dim = false }: { color: string; label: string; dim?: boolean }) {
+function Legend({ color, label }: { color: string; label: string }) {
   return (
     <span className="flex items-center gap-1.5 text-faint">
-      <span className="h-3 w-3 rounded-[3px]" style={{ background: color, opacity: dim ? 0.7 : 1 }} />
+      <span className="h-3 w-3 rounded-[3px]" style={{ background: color }} />
       {label}
     </span>
   );
