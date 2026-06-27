@@ -60,18 +60,24 @@ export function BlackBox({
     <div className="flex w-full flex-col items-stretch gap-3 lg:flex-row lg:items-center lg:gap-4">
       <Port label="input" tone="blue">
         {onChange ? (
-          <input
-            value={msg}
-            onChange={(e) => onChange(e.target.value)}
-            spellCheck={false}
-            maxLength={55}
-            aria-label="message to hash"
-            className="w-full bg-transparent font-mono text-sm text-blue outline-none"
-          />
+          <div className="flex items-center gap-1.5 border border-border bg-bg-soft px-2 py-1.5 focus-within:border-accent">
+            <span className="text-faint">&gt;</span>
+            <input
+              value={msg}
+              onChange={(e) => onChange(e.target.value)}
+              spellCheck={false}
+              maxLength={55}
+              placeholder="type here…"
+              aria-label="message to hash"
+              className="w-full bg-transparent font-mono text-sm text-blue caret-accent outline-none placeholder:text-faint"
+            />
+          </div>
         ) : (
           <div className="font-mono text-sm text-blue break-all">&quot;{msg || " "}&quot;</div>
         )}
-        <div className="mt-1 text-[0.65rem] text-faint">{trace.msgLen} bytes</div>
+        <div className="mt-1 text-[0.65rem] text-faint">
+          {trace.msgLen} bytes · editable
+        </div>
       </Port>
       <Arrow />
       <div className="relative mx-auto shrink-0 overflow-hidden border-2 border-accent/50 bg-[#08090d]">
