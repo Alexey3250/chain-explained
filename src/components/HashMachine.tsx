@@ -53,9 +53,7 @@ export function BlackBox({
 
   const idx = Math.min(round, 64);
   const cur = trace.states[idx];
-  const prev = idx > 0 ? trace.states[idx - 1] : null;
   const bits = cur.flatMap((w) => toBits(w));
-  const prevBits = prev ? prev.flatMap((w) => toBits(w)) : null;
   const done = round >= 64;
 
   return (
@@ -76,13 +74,7 @@ export function BlackBox({
         <div className="mt-1 text-[0.65rem] text-faint">{trace.msgLen} bytes</div>
       </Port>
       <Arrow />
-      <div
-        className="relative mx-auto shrink-0 overflow-hidden rounded-lg border-2 border-accent/50 bg-[#08090d]"
-        style={{
-          boxShadow:
-            "0 0 50px -10px rgba(247,147,26,0.45), inset 0 0 30px -12px rgba(247,147,26,0.4)",
-        }}
-      >
+      <div className="relative mx-auto shrink-0 overflow-hidden border-2 border-accent/50 bg-[#08090d]">
         <div className="flex items-center justify-between border-b border-accent/30 bg-accent/10 px-3 py-1.5">
           <span className="font-mono text-xs font-bold tracking-widest text-accent">SHA-256</span>
           <span className="flex items-center gap-1.5 font-mono text-[0.65rem] text-faint">
@@ -92,19 +84,13 @@ export function BlackBox({
         </div>
         <div className="relative p-3">
           <div className="grid gap-[2px]" style={{ gridTemplateColumns: "repeat(16, 1fr)" }}>
-            {bits.map((bit, i) => {
-              const changed = prevBits && prevBits[i] !== bit;
-              return (
-                <span
-                  key={i}
-                  className="h-2.5 w-2.5 transition-colors duration-150"
-                  style={{
-                    background: bit ? "var(--accent)" : "#15171f",
-                    boxShadow: changed ? "0 0 5px 1px rgba(247,147,26,0.9)" : undefined,
-                  }}
-                />
-              );
-            })}
+            {bits.map((bit, i) => (
+              <span
+                key={i}
+                className="h-2.5 w-2.5 transition-colors duration-150"
+                style={{ background: bit ? "var(--accent)" : "#15171f" }}
+              />
+            ))}
           </div>
           <div
             className="pointer-events-none absolute inset-0"
@@ -119,15 +105,15 @@ export function BlackBox({
       <Port label="output" tone={done ? "green" : "muted"}>
         {done ? (
           <motion.div
-            initial={{ opacity: 0, filter: "blur(5px)" }}
-            animate={{ opacity: 1, filter: "blur(0px)" }}
-            transition={{ duration: 0.4 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3 }}
             className="font-mono text-xs leading-relaxed text-green break-all"
           >
             {trace.digest}
           </motion.div>
         ) : (
-          <div className="font-mono text-xs leading-relaxed text-faint blur-[1.5px] break-all">
+          <div className="font-mono text-xs leading-relaxed text-faint break-all">
             {cur.map((w) => hex8(w)).join("")}
           </div>
         )}
@@ -251,31 +237,19 @@ function Layer({ n, title, desc, children }: { n: string; title: string; desc: s
 }
 
 function BitRow({
-  word, tone = "accent", prev = null, size = "md",
+  word, tone = "accent", size = "md",
 }: {
   word: number;
   tone?: keyof typeof TONE;
-  prev?: number | null;
   size?: "sm" | "md";
 }) {
   const bits = toBits(word);
-  const pb = prev != null ? toBits(prev) : null;
   const cls = size === "sm" ? "h-2 w-2" : "h-3 w-3";
   return (
     <div className="flex gap-[2px]">
-      {bits.map((b, i) => {
-        const changed = pb && pb[i] !== b;
-        return (
-          <span
-            key={i}
-            className={cls}
-            style={{
-              background: b ? TONE[tone] : "#15171f",
-              boxShadow: changed ? "0 0 5px 1px rgba(247,147,26,0.85)" : undefined,
-            }}
-          />
-        );
-      })}
+      {bits.map((b, i) => (
+        <span key={i} className={cls} style={{ background: b ? TONE[tone] : "#15171f" }} />
+      ))}
     </div>
   );
 }
@@ -344,7 +318,7 @@ const ScheduleRow = memo(function ScheduleRow({
 }) {
   return (
     <div
-      className={`flex items-center gap-2 rounded px-1 ${active ? "bg-accent/15 ring-1 ring-accent" : ""}`}
+      className={`flex items-center gap-2 px-1 ${active ? "border-l-2 border-accent bg-accent/20" : "border-l-2 border-transparent"}`}
       title={`W${index} = ${hex8(word)}`}
     >
       <span className="w-7 shrink-0 text-right font-mono text-[0.6rem] text-faint">w{index}</span>
@@ -365,7 +339,7 @@ function ScheduleLayer({ trace, current }: { trace: ShaTrace; current: number })
           <span className="h-2.5 w-2.5" style={{ background: TONE.accent }} /> computed from earlier words (w16–w63)
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 ring-1 ring-accent" /> this round&apos;s word
+          <span className="h-2.5 w-2.5 border border-accent" /> this round&apos;s word
         </span>
       </div>
       {trace.W.map((w, i) => (
@@ -409,18 +383,12 @@ function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) 
         <div className="mb-1.5 text-[0.65rem] uppercase tracking-widest text-faint">
           registers after round {round}
         </div>
-        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6rem] text-faint">
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2.5 w-2.5" style={{ background: "var(--accent)", boxShadow: "0 0 5px 1px rgba(247,147,26,0.85)" }} />
-            a glowing square = a bit that just flipped
-          </span>
-        </div>
         {LABELS.map((label, i) => {
           const fresh = i === 0 || i === 4;
           return (
             <div key={label} className="flex items-center gap-2">
               <span className={`w-3 font-mono text-xs ${fresh ? "text-accent" : "text-faint"}`}>{label}</span>
-              <BitRow word={cur[i]} tone="accent" prev={prev[i]} size="sm" />
+              <BitRow word={cur[i]} tone={fresh ? "accent" : "blue"} size="sm" />
               <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">{hex8(cur[i])}</Mono>
               {fresh && <span className="text-[0.55rem] font-semibold text-accent">← recomputed</span>}
             </div>

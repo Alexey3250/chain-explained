@@ -68,6 +68,14 @@ body {
   color: #120c02;
 }
 
+/* hard rule: everything is square and flat — no radius, no glow anywhere */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
 /* blinking terminal cursor */
 @keyframes blink {
   0%,

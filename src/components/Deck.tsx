@@ -164,7 +164,7 @@ export default function Deck() {
       </div>
 
       {/* bottom nav — flat terminal bar */}
-      <div className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-center gap-3 border-t border-border bg-bg/85 py-2.5 font-mono text-sm backdrop-blur-sm">
+      <div className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-center gap-3 border-t border-border bg-bg py-2.5 font-mono text-sm">
         <button
           type="button"
           onClick={prev}
