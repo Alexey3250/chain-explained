@@ -29,7 +29,15 @@ const TONE: Record<string, string> = {
 /* ===================================================================== */
 /*  The black box — pixelated animation                                  */
 /* ===================================================================== */
-export function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
+export function BlackBox({
+  trace,
+  msg,
+  onChange,
+}: {
+  trace: ShaTrace;
+  msg: string;
+  onChange?: (v: string) => void;
+}) {
   const [round, setRound] = useState(0);
   const [playing, setPlaying] = useState(true);
 
@@ -53,7 +61,18 @@ export function BlackBox({ trace, msg }: { trace: ShaTrace; msg: string }) {
   return (
     <div className="flex w-full flex-col items-stretch gap-3 lg:flex-row lg:items-center lg:gap-4">
       <Port label="input" tone="blue">
-        <div className="font-mono text-sm text-blue break-all">&quot;{msg || " "}&quot;</div>
+        {onChange ? (
+          <input
+            value={msg}
+            onChange={(e) => onChange(e.target.value)}
+            spellCheck={false}
+            maxLength={55}
+            aria-label="message to hash"
+            className="w-full bg-transparent font-mono text-sm text-blue outline-none"
+          />
+        ) : (
+          <div className="font-mono text-sm text-blue break-all">&quot;{msg || " "}&quot;</div>
+        )}
         <div className="mt-1 text-[0.65rem] text-faint">{trace.msgLen} bytes</div>
       </Port>
       <Arrow />
