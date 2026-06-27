@@ -1,24 +1,24 @@
 @import "tailwindcss";
 
 /* ------------------------------------------------------------------ */
-/*  Design tokens                                                      */
+/*  Design tokens — flat terminal / phosphor                          */
 /* ------------------------------------------------------------------ */
 :root {
-  --bg: #07080d;
-  --bg-soft: #0e1018;
-  --panel: #14161f;
-  --panel-2: #1b1e2a;
-  --border: #262a38;
-  --fg: #f2f3f7;
-  --muted: #9aa1b4;
-  --faint: #5b6178;
-  --accent: #f7931a; /* bitcoin orange */
+  --bg: #060709;
+  --bg-soft: #0c0e12;
+  --panel: #0d0f14;
+  --panel-2: #15181f;
+  --border: #23272f;
+  --fg: #d7dbe0;
+  --muted: #8b93a1;
+  --faint: #5a6170;
+  --accent: #f7931a; /* bitcoin amber */
   --accent-soft: #ffb454;
   --accent-dim: rgba(247, 147, 26, 0.14);
-  --green: #36d399;
-  --red: #f87272;
-  --blue: #60a5fa;
-  --purple: #a78bfa;
+  --green: #43c98b;
+  --red: #e5675f;
+  --blue: #5b9bd5;
+  --purple: #9a86d6;
 }
 
 @theme inline {
@@ -42,7 +42,7 @@
 }
 
 /* ------------------------------------------------------------------ */
-/*  Base                                                               */
+/*  Base — monospace, flat, faint grid like an old terminal           */
 /* ------------------------------------------------------------------ */
 html,
 body {
@@ -50,12 +50,14 @@ body {
 }
 
 body {
-  background:
-    radial-gradient(1100px 600px at 80% -10%, rgba(247, 147, 26, 0.10), transparent 60%),
-    radial-gradient(900px 600px at 5% 110%, rgba(96, 165, 250, 0.08), transparent 55%),
-    var(--bg);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 26px 26px;
   color: var(--fg);
-  font-family: var(--font-sans);
+  font-family: var(--font-mono);
+  font-feature-settings: "ss01";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden; /* the deck owns the viewport */
@@ -63,27 +65,31 @@ body {
 
 ::selection {
   background: var(--accent);
-  color: #1a1102;
+  color: #120c02;
 }
 
-/* thin custom scrollbars for inner scroll areas */
+/* blinking terminal cursor */
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.blink {
+  animation: blink 1.05s step-end infinite;
+}
+
+/* thin scrollbars for inner scroll areas */
 .scroll-thin::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 99px;
-}
-
-/* subtle starfield used on intro/big-picture slides */
-.starfield {
-  background-image:
-    radial-gradient(1px 1px at 20% 30%, rgba(255, 255, 255, 0.5), transparent),
-    radial-gradient(1px 1px at 70% 60%, rgba(255, 255, 255, 0.35), transparent),
-    radial-gradient(1px 1px at 40% 80%, rgba(255, 255, 255, 0.3), transparent),
-    radial-gradient(1.5px 1.5px at 85% 20%, rgba(255, 255, 255, 0.4), transparent),
-    radial-gradient(1px 1px at 10% 70%, rgba(255, 255, 255, 0.3), transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

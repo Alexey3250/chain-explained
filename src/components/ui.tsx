@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import type { ReactNode } from "react";
 
-/* A bordered surface used to group content on a slide. */
+/* A flat bordered surface — a terminal box. */
 export function Panel({
   children,
   className = "",
@@ -15,9 +15,7 @@ export function Panel({
 }) {
   return (
     <div
-      className={`rounded-2xl border border-border bg-panel/70 backdrop-blur-sm ${
-        glow ? "shadow-[0_0_40px_-12px_rgba(247,147,26,0.4)]" : ""
-      } ${className}`}
+      className={`border bg-panel ${glow ? "border-accent/60" : "border-border"} ${className}`}
     >
       {children}
     </div>
@@ -42,15 +40,13 @@ export function Mono({
     muted: "text-muted",
   }[tone];
   return (
-    <span
-      className={`font-mono text-[0.92em] break-all ${toneClass} ${className}`}
-    >
+    <span className={`font-mono text-[0.92em] break-all ${toneClass} ${className}`}>
       {children}
     </span>
   );
 }
 
-/* Small rounded label. */
+/* Bracketed terminal-style label: [ label ] */
 export function Pill({
   children,
   tone = "default",
@@ -61,23 +57,25 @@ export function Pill({
   className?: string;
 }) {
   const map = {
-    default: "border-border text-muted",
-    accent: "border-accent/40 text-accent bg-accent/10",
-    green: "border-green/40 text-green bg-green/10",
-    red: "border-red/40 text-red bg-red/10",
-    blue: "border-blue/40 text-blue bg-blue/10",
-    purple: "border-purple/40 text-purple bg-purple/10",
+    default: "text-muted",
+    accent: "text-accent",
+    green: "text-green",
+    red: "text-red",
+    blue: "text-blue",
+    purple: "text-purple",
   }[tone];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide ${map} ${className}`}
+      className={`inline-flex items-center gap-1.5 font-mono text-xs ${map} ${className}`}
     >
+      <span className="text-faint">[</span>
       {children}
+      <span className="text-faint">]</span>
     </span>
   );
 }
 
-/* Primary / secondary button used inside slide demos. */
+/* Flat bordered button; primary inverts on hover. */
 export function Btn({
   children,
   onClick,
@@ -92,11 +90,11 @@ export function Btn({
   className?: string;
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center gap-2 border px-3.5 py-2 font-mono text-sm transition disabled:opacity-40 disabled:cursor-not-allowed";
   const styles =
     variant === "primary"
-      ? "bg-accent text-[#1a1102] hover:bg-accent-soft"
-      : "border border-border text-fg hover:bg-panel-2";
+      ? "border-accent text-accent hover:bg-accent hover:text-[#0b0c10]"
+      : "border-border text-muted hover:border-fg hover:text-fg";
   return (
     <button
       type="button"
@@ -109,7 +107,7 @@ export function Btn({
   );
 }
 
-/* A labelled figure / stat. */
+/* A labelled figure / stat — flat. */
 export function Stat({
   label,
   value,
@@ -125,7 +123,7 @@ export function Stat({
     green: "text-green",
   }[tone];
   return (
-    <div className="rounded-xl border border-border bg-panel/60 px-4 py-3">
+    <div className="border border-border bg-panel px-4 py-3">
       <div className="text-[0.7rem] uppercase tracking-widest text-faint">
         {label}
       </div>
@@ -136,7 +134,7 @@ export function Stat({
   );
 }
 
-/* Fades + lifts children in, staggered by `delay`. */
+/* Fades children in, staggered by `delay`. */
 export function Reveal({
   children,
   delay = 0,
@@ -148,12 +146,23 @@ export function Reveal({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 14 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.4, delay, ease: [0.22, 1, 0.36, 1] }}
       className={className}
     >
       {children}
     </motion.div>
+  );
+}
+
+/* An ASCII horizontal rule, optionally with a centered label. */
+export function AsciiRule({ label }: { label?: string }) {
+  return (
+    <div className="flex items-center gap-2 font-mono text-xs text-faint">
+      <span className="flex-1 truncate">────────────────────────────────────────</span>
+      {label && <span className="shrink-0 text-muted">{label}</span>}
+      <span className="flex-1 truncate">────────────────────────────────────────</span>
+    </div>
   );
 }

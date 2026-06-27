@@ -128,18 +128,20 @@ export default function Deck() {
       </div>
 
       {/* brand */}
-      <div className="absolute left-5 top-4 z-30 flex items-center gap-2 text-sm font-semibold sm:left-8">
-        <span className="text-accent">⛓</span>
-        <span className="hidden sm:inline">Chain, Explained</span>
+      <div className="absolute left-5 top-4 z-30 flex items-center gap-1 font-mono text-sm sm:left-8">
+        <span className="text-faint">~/</span>
+        <span className="text-fg">chain-explained</span>
+        <span className="text-accent blink">█</span>
       </div>
 
       {/* chapter + counter */}
-      <div className="absolute right-5 top-3.5 z-30 flex items-center gap-3 sm:right-8">
-        <span className="hidden rounded-full border border-border bg-panel/60 px-3 py-1 text-xs text-muted sm:inline">
-          {current.chapter}
+      <div className="absolute right-5 top-4 z-30 flex items-center gap-3 font-mono text-xs sm:right-8">
+        <span className="hidden text-muted sm:inline">
+          {"// "}
+          {current.chapter.toLowerCase()}
         </span>
-        <span className="font-mono text-xs text-faint">
-          {String(index + 1).padStart(2, "0")} / {slides.length}
+        <span className="text-faint">
+          [{String(index + 1).padStart(2, "0")}/{slides.length}]
         </span>
       </div>
 
@@ -161,19 +163,19 @@ export default function Deck() {
         </AnimatePresence>
       </div>
 
-      {/* bottom nav */}
-      <div className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-center gap-4 pb-5">
+      {/* bottom nav — flat terminal bar */}
+      <div className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-center gap-3 border-t border-border bg-bg/85 py-2.5 font-mono text-sm backdrop-blur-sm">
         <button
           type="button"
           onClick={prev}
           disabled={index === 0}
           aria-label="Previous slide"
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-panel/80 text-fg backdrop-blur transition hover:bg-panel-2 disabled:opacity-30"
+          className="border border-border px-2.5 py-1 text-muted transition hover:border-fg hover:text-fg disabled:opacity-30"
         >
-          <Chevron dir="left" />
+          [ prev ]
         </button>
 
-        <div className="flex max-w-[50vw] items-center gap-1.5 overflow-hidden">
+        <div className="flex max-w-[45vw] items-center gap-1 overflow-hidden text-faint">
           {slides.map((s, i) => (
             <button
               key={s.id}
@@ -181,15 +183,11 @@ export default function Deck() {
               onClick={() => goTo(i)}
               aria-label={`Go to: ${s.title}`}
               title={s.title}
-              className="group relative py-2"
+              className={`px-0.5 leading-none transition ${
+                i === index ? "text-accent" : "text-faint hover:text-muted"
+              }`}
             >
-              <span
-                className={`block h-1.5 rounded-full transition-all ${
-                  i === index
-                    ? "w-6 bg-accent"
-                    : "w-1.5 bg-border group-hover:bg-faint"
-                }`}
-              />
+              {i === index ? "█" : "·"}
             </button>
           ))}
         </div>
@@ -199,42 +197,16 @@ export default function Deck() {
           onClick={next}
           disabled={index === slides.length - 1}
           aria-label="Next slide"
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-accent/90 text-[#1a1102] backdrop-blur transition hover:bg-accent disabled:opacity-30"
+          className="border border-accent px-2.5 py-1 text-accent transition hover:bg-accent hover:text-[#0b0c10] disabled:opacity-30"
         >
-          <Chevron dir="right" />
+          [ next ]
         </button>
       </div>
 
       {/* keyboard hint */}
-      <div className="pointer-events-none absolute bottom-5 right-6 z-30 hidden items-center gap-1.5 text-xs text-faint lg:flex">
-        use <Key>←</Key> <Key>→</Key> to navigate
+      <div className="pointer-events-none absolute bottom-3 right-6 z-30 hidden font-mono text-xs text-faint lg:block">
+        ← / → to navigate
       </div>
     </main>
-  );
-}
-
-function Chevron({ dir }: { dir: "left" | "right" }) {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{ transform: dir === "left" ? "rotate(180deg)" : undefined }}
-    >
-      <path d="M9 6l6 6-6 6" />
-    </svg>
-  );
-}
-
-function Key({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded border border-border bg-panel px-1.5 py-0.5 font-mono text-[0.7rem] text-muted">
-      {children}
-    </kbd>
   );
 }
