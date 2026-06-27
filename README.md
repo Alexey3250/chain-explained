@@ -2,7 +2,7 @@
 
 An interactive, slide-by-slide walkthrough of **how Bitcoin actually works** — built for visual learners. Start from a single hash and zoom all the way out to a global network that no one owns. Every hash, signature, and mined block on the slides is computed **for real, in your browser**, and the final slide shows **live data from the Bitcoin network**.
 
-🔗 **Live:** _(deploying — link added after first deploy)_
+🔗 **Live:** **[chain-explained.vercel.app](https://chain-explained.vercel.app)**
 
 ![Built with Next.js](https://img.shields.io/badge/Next.js-16-black) ![React](https://img.shields.io/badge/React-19-149eca) ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6) ![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38bdf8)
 
