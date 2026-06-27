@@ -236,6 +236,17 @@ function Layers({ trace, msg }: { trace: ShaTrace; msg: string }) {
         />
       </div>
 
+      <p className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-faint">
+        <span>Each little square is one bit:</span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2.5 w-2.5" style={{ background: "var(--accent)" }} /> = 1
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2.5 w-2.5" style={{ background: "#15171f" }} /> = 0
+        </span>
+        <span>· 32 squares = one 32-bit number.</span>
+      </p>
+
       <div className="space-y-8">
         <Layer n="01" title="Input" desc="Your message, as raw bytes.">
           <InputLayer trace={trace} msg={msg} />
@@ -419,6 +430,19 @@ const ScheduleRow = memo(function ScheduleRow({
 function ScheduleLayer({ trace, current }: { trace: ShaTrace; current: number }) {
   return (
     <div className="space-y-[3px]">
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6rem] text-faint">
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2.5 w-2.5" style={{ background: TONE.blue }} /> from your
+          message (w0–w15)
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2.5 w-2.5" style={{ background: TONE.accent }} /> computed
+          from earlier words (w16–w63)
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2.5 w-2.5 ring-1 ring-accent" /> this round&apos;s word
+        </span>
+      </div>
       {trace.W.map((w, i) => (
         <ScheduleRow key={i} word={w} index={i} fromMsg={i < 16} active={i === current} />
       ))}
@@ -460,8 +484,20 @@ function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) 
 
       {/* registers before → after */}
       <div className="space-y-1">
-        <div className="mb-1 text-[0.65rem] uppercase tracking-widest text-faint">
+        <div className="mb-1.5 text-[0.65rem] uppercase tracking-widest text-faint">
           registers after round {round}
+        </div>
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6rem] text-faint">
+          <span className="inline-flex items-center gap-1">
+            <span
+              className="h-2.5 w-2.5"
+              style={{
+                background: "var(--accent)",
+                boxShadow: "0 0 5px 1px rgba(247,147,26,0.85)",
+              }}
+            />
+            a glowing square = a bit that just flipped
+          </span>
         </div>
         {LABELS.map((label, i) => {
           const fresh = i === 0 || i === 4;
@@ -470,15 +506,23 @@ function CompressionLayer({ trace, round }: { trace: ShaTrace; round: number }) 
               <span className={`w-3 font-mono text-xs ${fresh ? "text-accent" : "text-faint"}`}>
                 {label}
               </span>
-              <BitRow word={cur[i]} tone={fresh ? "accent" : "grey"} prev={prev[i]} size="sm" />
+              <BitRow word={cur[i]} tone="accent" prev={prev[i]} size="sm" />
               <Mono tone="muted" className="ml-1 hidden text-[0.65rem] sm:inline">
                 {hex8(cur[i])}
               </Mono>
+              {fresh && (
+                <span className="text-[0.55rem] font-semibold text-accent">
+                  ← recomputed
+                </span>
+              )}
             </div>
           );
         })}
-        <p className="pt-1.5 font-mono text-[0.65rem] text-faint">
-          new a = T1 + T2 &nbsp;·&nbsp; new e = d + T1 &nbsp;·&nbsp; rest shift down
+        <p className="pt-1.5 text-[0.65rem] text-muted">
+          Only <span className="font-mono text-accent">a</span> and{" "}
+          <span className="font-mono text-accent">e</span> are freshly built each
+          round (a = T1+T2, e = d+T1). The other six just shift down one slot —
+          so most of what changes is really the new a and e rippling through.
         </p>
       </div>
     </div>
