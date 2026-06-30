@@ -173,6 +173,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const memCols = Math.floor((CW - MEM_X0 - 2) / TX);
     const memRows = Math.floor((CH - MEM_Y0 - 2) / TX);
     const memCap = memCols * memRows;
+    // keep the visible pile to a few rows — enough to always fill a block, but it
+    // never grows tall enough to overflow into the chain or to tank the framerate
+    const memTarget = Math.min(memCap, memCols * 4);
     const memSlot = (i: number) => ({
       x: MEM_X0 + (i % memCols) * TX,
       y: CH - 2 - (Math.floor(i / memCols) + 1) * TX,
@@ -213,7 +216,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : green, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: hsl(randHue(), 52, 50), nonce: hsl(randHue(), 60, 55) });
     }
     // seed a visible mempool pile
-    const seedPool = Math.min(memCap, intro ? 120 : 220);
+    const seedPool = Math.min(memTarget, intro ? 150 : 190);
     for (let i = 0; i < seedPool; i++) {
       const s = memSlot(i);
       txs.push({ x: s.x, y: s.y, tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "pool", slot: i, sel: false, flash: 0 });
@@ -223,17 +226,19 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     let phaseT = 0;
     const st = statusRef.current;
     st.phase = "idle";
-    const spawnEvery = intro ? 150 : 80;
+    // a miner confirms TOTAL txs each full cycle (~9.3s intro / ~6.5s outro), so
+    // spawn at roughly that rate — the pool stays level instead of piling to the cap
+    const spawnEvery = intro ? 245 : 170;
     const IDLE_MS = intro ? 2600 : 1500;
     const HASH_MS = intro ? 2800 : 1900;
     const FOUND_MS = 850;
     const VERIFY_MS = intro ? 2100 : 1500; // nodes check the 3 parts in sequence (~700ms each)
 
     const spawnTx = () => {
-      if (txs.length >= memCap) return;
+      if (txs.length >= memTarget) return;
       const occ = new Set(txs.map((t) => t.slot));
       let i = 0;
-      while (occ.has(i) && i < memCap) i++;
+      while (occ.has(i) && i < memTarget) i++;
       const s = memSlot(i);
       txs.push({ x: CW + rnd(2, 26), y: rnd(MEM_Y0, CH - 6), tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "in", slot: i, sel: false, flash: 0 });
     };
@@ -515,8 +520,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       // which of the 3 parts is under inspection this frame (-1 when not verifying)
       const checkStage = st.phase === "verify" ? Math.min(2, Math.floor(phaseT / (VERIFY_MS / 3))) : -1;
 
-      // mempool pixels (selected ones stay put — they're copied, not removed)
+      // mempool pixels (selected ones stay put — they're copied, not removed).
+      // skip anything still off-screen (e.g. spawning in past the right edge)
       for (const t of txs) {
+        if (t.x >= CW || t.x <= -TX || t.y >= CH || t.y <= -TX) continue;
         rect(t.x, t.y, PX, PX, t.flash > 0 ? "#eef3ee" : feeToColor(t.fee));
       }
 
