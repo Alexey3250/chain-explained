@@ -1,36 +1,103 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import { SlideShell } from "@/components/SlideShell";
-import { Panel, Pill } from "@/components/ui";
+import { Pill } from "@/components/ui";
 
 const API = "https://mempool.space/api";
+const SIZE = 100; // treemap coordinate space (square)
 
-type Projected = {
-  nTx: number;
-  medianFee: number;
-  lo: number;
-  hi: number;
-  sizeMB: number;
-};
-type RecentTx = {
-  txid: string;
-  valueBtc: number;
-  vsize: number;
-  feeRate: number;
-};
+type Tile = { x: number; y: number; w: number; h: number; fee: number };
 type Data = {
   count: number;
   vsizeMB: number;
-  blocks: Projected[];
-  recent: RecentTx[];
+  fastestFee: number;
+  tiles: Tile[];
 };
 
-function feeColor(rate: number): string {
-  if (rate < 8) return "var(--green)";
-  if (rate <= 30) return "var(--accent)";
-  return "var(--red)";
+/* ---- fee → colour (log scale, green → amber → red) ---- */
+const STOPS: [number, [number, number, number]][] = [
+  [1, [27, 94, 75]],
+  [3, [46, 125, 80]],
+  [8, [124, 170, 60]],
+  [20, [205, 185, 52]],
+  [50, [247, 147, 26]],
+  [150, [229, 103, 95]],
+];
+const rgb = (c: number[]) => `rgb(${c[0]},${c[1]},${c[2]})`;
+function feeToColor(f: number): string {
+  const x = Math.max(1, f);
+  if (x <= STOPS[0][0]) return rgb(STOPS[0][1]);
+  for (let i = 1; i < STOPS.length; i++) {
+    if (x <= STOPS[i][0]) {
+      const [f0, c0] = STOPS[i - 1];
+      const [f1, c1] = STOPS[i];
+      const t = (Math.log(x) - Math.log(f0)) / (Math.log(f1) - Math.log(f0));
+      return rgb(c0.map((c, k) => Math.round(c + (c1[k] - c) * t)));
+    }
+  }
+  return rgb(STOPS[STOPS.length - 1][1]);
+}
+
+/* ---- squarified treemap (Bruls/Huizing/van Wijk) ---- */
+function squarify(
+  data: { value: number; fee: number }[],
+): Tile[] {
+  const total = data.reduce((a, d) => a + d.value, 0) || 1;
+  const scale = (SIZE * SIZE) / total;
+  const items = data
+    .map((d) => ({ area: d.value * scale, fee: d.fee }))
+    .sort((a, b) => b.area - a.area);
+
+  const out: Tile[] = [];
+  const rect = { x: 0, y: 0, w: SIZE, h: SIZE };
+
+  const worst = (row: { area: number }[], side: number) => {
+    const sum = row.reduce((a, r) => a + r.area, 0);
+    const max = Math.max(...row.map((r) => r.area));
+    const min = Math.min(...row.map((r) => r.area));
+    const s2 = sum * sum;
+    const l2 = side * side;
+    return Math.max((l2 * max) / s2, s2 / (l2 * min));
+  };
+
+  const layout = (row: { area: number; fee: number }[]) => {
+    const sum = row.reduce((a, r) => a + r.area, 0);
+    if (rect.w >= rect.h) {
+      const colW = sum / rect.h;
+      let cy = rect.y;
+      for (const r of row) {
+        const rh = r.area / colW;
+        out.push({ x: rect.x, y: cy, w: colW, h: rh, fee: r.fee });
+        cy += rh;
+      }
+      rect.x += colW;
+      rect.w -= colW;
+    } else {
+      const rowH = sum / rect.w;
+      let cx = rect.x;
+      for (const r of row) {
+        const rw = r.area / rowH;
+        out.push({ x: cx, y: rect.y, w: rw, h: rowH, fee: r.fee });
+        cx += rw;
+      }
+      rect.y += rowH;
+      rect.h -= rowH;
+    }
+  };
+
+  let row: { area: number; fee: number }[] = [];
+  for (const item of items) {
+    const side = Math.min(rect.w, rect.h);
+    if (row.length === 0 || worst([...row, item], side) <= worst(row, side)) {
+      row.push(item);
+    } else {
+      layout(row);
+      row = [item];
+    }
+  }
+  if (row.length) layout(row);
+  return out;
 }
 
 export default function Mempool() {
@@ -39,34 +106,26 @@ export default function Mempool() {
 
   const load = useCallback(async () => {
     try {
-      const [mp, blocks, recent] = await Promise.all([
+      const [mp, fees] = await Promise.all([
         fetch(`${API}/mempool`).then((r) => r.json()),
-        fetch(`${API}/v1/fees/mempool-blocks`).then((r) => r.json()),
-        fetch(`${API}/mempool/recent`).then((r) => r.json()),
+        fetch(`${API}/v1/fees/recommended`).then((r) => r.json()),
       ]);
+      const hist: [number, number][] = mp.fee_histogram ?? [];
+      // split big fee-bands into many capped tiles so it reads as a dense
+      // mosaic (area stays proportional to block space)
+      const totalV = hist.reduce((a, [, v]) => a + v, 0) || 1;
+      const cap = totalV / 520;
+      const items: { value: number; fee: number }[] = [];
+      for (const [fee, vsize] of hist) {
+        const n = Math.max(1, Math.min(120, Math.round(vsize / cap)));
+        for (let k = 0; k < n; k++) items.push({ value: vsize / n, fee });
+      }
+      const tiles = squarify(items);
       setData({
         count: mp.count ?? 0,
         vsizeMB: (mp.vsize ?? 0) / 1_000_000,
-        blocks: (blocks as Array<Record<string, number | number[]>>)
-          .slice(0, 6)
-          .map((b) => {
-            const range = (b.feeRange as number[]) ?? [0];
-            return {
-              nTx: b.nTx as number,
-              medianFee: Math.round(b.medianFee as number),
-              lo: Math.round(range[0]),
-              hi: Math.round(range[range.length - 1]),
-              sizeMB: (b.blockVSize as number) / 1_000_000,
-            };
-          }),
-        recent: (recent as Array<Record<string, number | string>>)
-          .slice(0, 12)
-          .map((t) => ({
-            txid: t.txid as string,
-            valueBtc: (t.value as number) / 1e8,
-            vsize: t.vsize as number,
-            feeRate: Math.max(1, Math.round((t.fee as number) / (t.vsize as number))),
-          })),
+        fastestFee: fees?.fastestFee ?? 0,
+        tiles,
       });
       setState("ok");
     } catch {
@@ -85,106 +144,77 @@ export default function Mempool() {
     <SlideShell
       kicker="the network · live"
       title="inside the mempool, right now"
-      lede="before a transaction is mined it waits in the mempool — the network's shared waiting room. miners pick the highest-fee transactions first. this is the real backlog, streaming live."
+      lede="every transaction waiting to be mined, drawn to scale. each tile is a band of transactions paying a similar fee — bigger means more block space, brighter means a higher fee. this is the live backlog."
     >
-      <div className="flex flex-col gap-5">
-        {/* status + headline stats */}
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        {/* the treemap — the star */}
+        <div className="mx-auto w-full max-w-[420px]">
+          <div className="aspect-square w-full border border-border bg-[#0a0c10]">
+            {data ? (
+              <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="h-full w-full">
+                {data.tiles.map((t, i) => (
+                  <rect
+                    key={i}
+                    x={t.x}
+                    y={t.y}
+                    width={t.w}
+                    height={t.h}
+                    stroke="#0a0c10"
+                    strokeWidth={0.12}
+                    style={{ fill: feeToColor(t.fee), transition: "fill 0.6s ease-out" }}
+                  />
+                ))}
+              </svg>
+            ) : (
+              <div className="flex h-full items-center justify-center font-mono text-xs text-faint">
+                {state === "error" ? "network unreachable" : "connecting…"}
+              </div>
+            )}
+          </div>
+
+          {/* fee colour legend */}
+          <div className="mt-2">
+            <div
+              className="h-2 w-full"
+              style={{
+                background:
+                  "linear-gradient(90deg, rgb(27,94,75), rgb(46,125,80), rgb(124,170,60), rgb(205,185,52), rgb(247,147,26), rgb(229,103,95))",
+              }}
+            />
+            <div className="mt-1 flex justify-between font-mono text-[0.6rem] text-faint">
+              <span>1 sat/vB</span>
+              <span>low fee → high fee</span>
+              <span>150+</span>
+            </div>
+          </div>
+        </div>
+
+        {/* live stats + reading guide */}
+        <div className="flex flex-col gap-3 lg:w-64">
           <Pill tone={state === "ok" ? "green" : state === "error" ? "red" : "accent"}>
             <span
               className={`inline-block h-2 w-2 ${
                 state === "ok" ? "animate-pulse bg-green" : state === "error" ? "bg-red" : "bg-accent"
               }`}
             />
-            {state === "ok" ? "live" : state === "error" ? "offline" : "connecting…"}
+            {state === "ok" ? "live · bitcoin network" : state === "error" ? "offline" : "connecting…"}
           </Pill>
-          <Stat label="waiting" value={data ? `${data.count.toLocaleString()} txs` : "…"} />
-          <Stat label="backlog" value={data ? `${data.vsizeMB.toFixed(1)} vMB` : "…"} />
+
+          <Stat label="transactions waiting" value={data ? data.count.toLocaleString() : "…"} />
+          <Stat label="total backlog" value={data ? `${data.vsizeMB.toFixed(1)} vMB` : "…"} />
           <Stat
-            label="next-block fee"
-            value={data?.blocks[0] ? `~${data.blocks[0].medianFee} sat/vB` : "…"}
+            label="to get in next block"
+            value={data ? `~${data.fastestFee} sat/vB` : "…"}
           />
-        </div>
 
-        {/* projected blocks miners will build next */}
-        <div>
-          <div className="mb-2 font-mono text-xs text-faint">
-            {"// upcoming blocks — what miners will pack next (highest fees first)"}
-          </div>
-          <div className="flex gap-2 overflow-x-auto scroll-thin pb-1">
-            {!data && <Skeleton n={4} />}
-            {data?.blocks.map((b, i) => {
-              const c = feeColor(b.medianFee);
-              return (
-                <div
-                  key={i}
-                  className="min-w-[130px] shrink-0 border p-3"
-                  style={{ borderColor: c, background: `${c}14` }}
-                >
-                  <div className="font-mono text-[0.65rem] text-faint">
-                    {i === 0 ? "next block" : `+${i} block`}
-                  </div>
-                  <div className="mt-1 font-mono text-lg font-bold" style={{ color: c }}>
-                    {b.medianFee}
-                    <span className="text-xs font-normal text-faint"> sat/vB</span>
-                  </div>
-                  <div className="mt-1 font-mono text-[0.65rem] text-muted">
-                    {b.lo}–{b.hi} sat/vB
-                  </div>
-                  <div className="mt-2 font-mono text-[0.65rem] text-faint">
-                    ~{b.nTx.toLocaleString()} tx · {b.sizeMB.toFixed(2)} MB
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <p className="font-mono text-[0.7rem] leading-relaxed text-muted">
+            miners fill the next ~1 MB block from the top fees down. the green
+            mass at the bottom may wait hours; the bright tiles get mined first.
+          </p>
+          <p className="font-mono text-[0.65rem] text-faint">
+            mempool.space · refreshes every 6s
+          </p>
         </div>
-
-        {/* live incoming transaction feed */}
-        <div>
-          <div className="mb-2 font-mono text-xs text-faint">
-            {"// arriving now — newest unconfirmed transactions"}
-          </div>
-          <Panel className="h-[200px] overflow-y-auto scroll-thin p-3">
-            {state === "error" ? (
-              <p className="font-mono text-xs text-red">
-                couldn&apos;t reach the network — but it&apos;s still out there,
-                ticking every ~10 minutes.
-              </p>
-            ) : !data ? (
-              <p className="font-mono text-xs text-faint">connecting to the bitcoin network…</p>
-            ) : (
-              <div className="space-y-1">
-                <AnimatePresence initial={false}>
-                  {data.recent.map((t) => (
-                    <motion.div
-                      key={t.txid}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="flex items-center gap-3 font-mono text-[0.7rem]"
-                    >
-                      <span className="text-faint">tx</span>
-                      <span className="text-blue">{t.txid.slice(0, 10)}…</span>
-                      <span className="ml-auto text-muted">
-                        {t.valueBtc.toLocaleString(undefined, { maximumFractionDigits: 3 })} BTC
-                      </span>
-                      <span className="w-20 text-right" style={{ color: feeColor(t.feeRate) }}>
-                        {t.feeRate} sat/vB
-                      </span>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </div>
-            )}
-          </Panel>
-        </div>
-
-        <p className="font-mono text-[0.7rem] text-faint">
-          live data from mempool.space · refreshes every 6s. a transaction
-          leaves this room the moment a miner includes it in a block.
-        </p>
       </div>
     </SlideShell>
   );
@@ -192,21 +222,11 @@ export default function Mempool() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-border bg-bg-soft px-3 py-1.5">
-      <span className="font-mono text-[0.6rem] uppercase tracking-widest text-faint">
+    <div className="border border-border bg-bg-soft px-3 py-2">
+      <div className="font-mono text-[0.6rem] uppercase tracking-widest text-faint">
         {label}
-      </span>
-      <div className="font-mono text-sm font-semibold text-fg">{value}</div>
+      </div>
+      <div className="font-mono text-base font-semibold text-fg">{value}</div>
     </div>
-  );
-}
-
-function Skeleton({ n }: { n: number }) {
-  return (
-    <>
-      {Array.from({ length: n }).map((_, i) => (
-        <div key={i} className="h-[96px] min-w-[130px] shrink-0 border border-border bg-panel" />
-      ))}
-    </>
   );
 }
