@@ -11,10 +11,11 @@ import { feeToColor } from "@/lib/fee";
    off-screen as history. Crisp, no antialiasing.
    ===================================================================== */
 
-const CW = 460; // canvas internal pixels (nearest-neighbour upscaled by CSS)
+const SCALE = 2; // backing-store supersample → crisp, uniform pixels
+const CW = 460; // logical width
 const CH = 188;
-const TX = 4; // one transaction = one little pixel (3px + 1px gap)
-const PX = TX - 1;
+const TX = 4; // one transaction cell (pitch)
+const PX = TX - 0.5; // pixel fills the cell leaving exactly a 1px gap at 2×
 const BN = 6; // block is BN×BN transactions
 const TOTAL = BN * BN;
 const BLOCK = BN * TX + 4;
@@ -75,11 +76,13 @@ type Tx = {
   tx0: number;
   ty0: number;
   fee: number;
-  phase: "in" | "pool" | "toblock";
+  phase: "in" | "pool";
   slot: number;
-  mb: 0 | 1; // which miner block (0 = top/green, 1 = bottom/blue)
+  sel: boolean; // selected for the current round — stays in the mempool until confirmed
   flash: number;
 };
+// a transaction copied toward one miner's block (preserves the tx colour)
+type Copy = { x: number; y: number; tx0: number; ty0: number; fee: number; mb: 0 | 1; slot: number };
 type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[] };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
 type Status = { phase: "idle" | "gather" | "hash" | "found"; winner: number }; // winner: -1 none, 0 green, 1 blue
@@ -160,6 +163,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     });
 
     const txs: Tx[] = [];
+    const copies: Copy[] = [];
     const blocks: Blk[] = [];
     const formingTop = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
     const formingBot = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
@@ -182,7 +186,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const seedPool = Math.min(memCap, intro ? 120 : 220);
     for (let i = 0; i < seedPool; i++) {
       const s = memSlot(i);
-      txs.push({ x: s.x, y: s.y, tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "pool", slot: i, mb: 0, flash: 0 });
+      txs.push({ x: s.x, y: s.y, tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "pool", slot: i, sel: false, flash: 0 });
     }
 
     let spawnAcc = 0;
@@ -195,29 +199,29 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const FOUND_MS = 1000;
 
     const spawnTx = () => {
-      const pooled = txs.filter((t) => t.phase !== "toblock").length;
-      if (pooled >= memCap) return;
-      const occ = new Set(txs.filter((t) => t.phase === "pool" || t.phase === "in").map((t) => t.slot));
+      if (txs.length >= memCap) return;
+      const occ = new Set(txs.map((t) => t.slot));
       let i = 0;
       while (occ.has(i) && i < memCap) i++;
       const s = memSlot(i);
-      txs.push({ x: CW + rnd(2, 26), y: rnd(MEM_Y0, CH - 6), tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "in", slot: i, mb: 0, flash: 0 });
+      txs.push({ x: CW + rnd(2, 26), y: rnd(MEM_Y0, CH - 6), tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "in", slot: i, sel: false, flash: 0 });
     };
 
+    const vary = (f: number) => Math.max(1, f * (1 + (Math.random() - 0.5) * 0.16)); // very similar, tiny bit different
     const startGather = () => {
-      const pool = txs.filter((t) => t.phase === "pool");
-      if (pool.length < 2 * TOTAL) return false;
+      const pool = txs.filter((t) => t.phase === "pool" && !t.sel);
+      if (pool.length < TOTAL) return false;
       pool.sort((a, b) => b.fee - a.fee);
       formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
-      pool.slice(0, 2 * TOTAL).forEach((t, idx) => {
-        const mb = (idx < TOTAL ? 0 : 1) as 0 | 1;
-        const k = idx % TOTAL;
-        t.phase = "toblock";
-        t.mb = mb;
-        t.slot = k;
-        t.tx0 = ABX + 2 + (k % BN) * TX;
-        t.ty0 = (mb === 0 ? TOPB : BOTB) + 2 + Math.floor(k / BN) * TX;
+      copies.length = 0;
+      // both miners see the SAME transactions — copy each one to both blocks
+      pool.slice(0, TOTAL).forEach((t, k) => {
+        t.sel = true;
+        const cx = ABX + 2 + (k % BN) * TX;
+        const cy = 2 + Math.floor(k / BN) * TX;
+        copies.push({ x: t.x, y: t.y, tx0: cx, ty0: TOPB + cy, fee: vary(t.fee), mb: 0, slot: k });
+        copies.push({ x: t.x, y: t.y, tx0: cx, ty0: BOTB + cy, fee: vary(t.fee), mb: 1, slot: k });
       });
       return true;
     };
@@ -228,7 +232,11 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       const startY = st.winner === 0 ? TOPB : BOTB;
       blocks.unshift({ x: ABX, tx: CHAIN_RIGHT, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee) });
       for (let i = 1; i < blocks.length; i++) blocks[i].tx = CHAIN_RIGHT - i * PITCH;
-      for (let i = txs.length - 1; i >= 0; i--) if (txs[i].phase === "toblock") txs.splice(i, 1);
+      // only the confirmed transactions leave the mempool; the rest stay
+      for (let i = txs.length - 1; i >= 0; i--) if (txs[i].sel) txs.splice(i, 1);
+      copies.length = 0;
+      formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
+      formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
       setMinted((m) => m + 1);
     };
 
@@ -267,7 +275,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
       }
 
-      // move txs
+      // mempool txs drifting into the pool
       for (const t of txs) {
         if (t.phase === "in") {
           t.x += (t.tx0 - t.x) * Math.min(1, k * 3);
@@ -277,16 +285,20 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
             t.y = t.ty0;
             t.phase = "pool";
           }
-        } else if (t.phase === "toblock") {
-          t.x += (t.tx0 - t.x) * Math.min(1, k * 4);
-          t.y += (t.ty0 - t.y) * Math.min(1, k * 4);
-          if (Math.abs(t.x - t.tx0) < 0.5 && Math.abs(t.y - t.ty0) < 0.5) {
-            const fb = t.mb === 0 ? formingTop : formingBot;
-            fb[t.slot].fee = t.fee;
-            fb[t.slot].filled = true;
-          }
         }
         if (t.flash > 0) t.flash -= dt;
+      }
+      // copies flying from the mempool into BOTH blocks (their colour preserved)
+      for (let i = copies.length - 1; i >= 0; i--) {
+        const c = copies[i];
+        c.x += (c.tx0 - c.x) * Math.min(1, k * 4);
+        c.y += (c.ty0 - c.y) * Math.min(1, k * 4);
+        if (Math.abs(c.x - c.tx0) < 0.5 && Math.abs(c.y - c.ty0) < 0.5) {
+          const fb = c.mb === 0 ? formingTop : formingBot;
+          fb[c.slot].fee = c.fee;
+          fb[c.slot].filled = true;
+          copies.splice(i, 1); // arrived → it becomes the block pixel
+        }
       }
 
       // nodes
@@ -321,9 +333,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     // ---- crisp drawing helpers (integer-aligned, no AA) ----
     const R = Math.round;
+    const S = SCALE;
     const rect = (x: number, y: number, w: number, h: number, c: string) => {
       ctx.fillStyle = c;
-      ctx.fillRect(R(x), R(y), R(w), R(h));
+      ctx.fillRect(R(x * S), R(y * S), R(w * S), R(h * S));
     };
     const frame = (x: number, y: number, s: number, c: string) => {
       rect(x, y, s, 1, c);
@@ -343,7 +356,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         i = 0;
       ctx.fillStyle = c;
       for (;;) {
-        if (i++ % 2 === 0) ctx.fillRect(X, Y, 1, 1);
+        if (i++ % 2 === 0) ctx.fillRect(X * S, Y * S, S, S);
         if (X === R(x1) && Y === R(y1)) break;
         const e2 = 2 * err;
         if (e2 >= dy) {
@@ -364,12 +377,11 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     };
 
     const draw = () => {
-      ctx.clearRect(0, 0, CW, CH);
+      ctx.clearRect(0, 0, CW * S, CH * S);
       const hov = hoveredRef.current;
 
-      // mempool pixels
+      // mempool pixels (selected ones stay put — they're copied, not removed)
       for (const t of txs) {
-        if (t.phase === "toblock") continue;
         rect(t.x, t.y, PX, PX, t.flash > 0 ? "#eef3ee" : feeToColor(t.fee));
       }
 
@@ -384,28 +396,25 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         rect(n.x + 1, n.y + 1, 1, 1, accent);
       }
 
-      // txs flying into the block
-      for (const t of txs) {
-        if (t.phase === "toblock") rect(t.x, t.y, PX, PX, feeToColor(t.fee));
-      }
+      // transactions copied toward both blocks (their mempool colour preserved)
+      for (const c of copies) rect(c.x, c.y, PX, PX, feeToColor(c.fee));
 
-      // two miners racing — top (green), bottom (blue)
-      if (st.phase === "gather" || st.phase === "hash" || st.phase === "found") {
-        const hashing = st.phase === "hash";
-        const won = st.phase === "found";
-        const topC = won ? (st.winner === 0 ? green : "#26352e") : hashing ? (R(phaseT / 90) % 2 === 0 ? green : faint) : green;
-        const botC = won ? (st.winner === 1 ? blue : "#223038") : hashing ? (R(phaseT / 90 + 1) % 2 === 0 ? blue : faint) : blue;
-        blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
-        frame(ABX, TOPB, BLOCK, topC);
-        blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
-        frame(ABX, BOTB, BLOCK, botC);
-        // miner glyphs (pickaxe), animated while hashing
-        const tick = hashing && R(phaseT / 70) % 2 ? 1 : 0;
-        rect(ABX - 7, TOPB + BLOCK / 2 - 2 + tick, 3, 3, topC);
-        rect(ABX - 9, TOPB + BLOCK / 2 + 2, 6, 1, topC);
-        rect(ABX - 7, BOTB + BLOCK / 2 - 2 + tick, 3, 3, botC);
-        rect(ABX - 9, BOTB + BLOCK / 2 + 2, 6, 1, botC);
-      }
+      // two miners racing — top (green), bottom (blue) — always on screen
+      const hashing = st.phase === "hash";
+      const won = st.phase === "found";
+      const idle = st.phase === "idle";
+      const topC = idle ? "#26352e" : won ? (st.winner === 0 ? green : "#26352e") : hashing ? (R(phaseT / 90) % 2 === 0 ? green : faint) : green;
+      const botC = idle ? "#223038" : won ? (st.winner === 1 ? blue : "#223038") : hashing ? (R(phaseT / 90 + 1) % 2 === 0 ? blue : faint) : blue;
+      blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
+      frame(ABX, TOPB, BLOCK, topC);
+      blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
+      frame(ABX, BOTB, BLOCK, botC);
+      // miner glyphs (pickaxe), animated while hashing
+      const tick = hashing && R(phaseT / 70) % 2 ? 1 : 0;
+      rect(ABX - 7, TOPB + BLOCK / 2 - 2 + tick, 3, 3, topC);
+      rect(ABX - 9, TOPB + BLOCK / 2 + 2, 6, 1, topC);
+      rect(ABX - 7, BOTB + BLOCK / 2 - 2 + tick, 3, 3, botC);
+      rect(ABX - 9, BOTB + BLOCK / 2 + 2, 6, 1, botC);
 
       // chain blocks (winner's colour outline) + 1px links
       for (let i = blocks.length - 1; i >= 0; i--) {
@@ -465,8 +474,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       <div className="relative w-full overflow-hidden border border-border bg-bg" style={{ aspectRatio: `${CW} / ${CH}` }}>
         <canvas
           ref={canvasRef}
-          width={CW}
-          height={CH}
+          width={CW * SCALE}
+          height={CH * SCALE}
           className="absolute inset-0 h-full w-full"
           style={{ imageRendering: "pixelated" }}
           aria-hidden
