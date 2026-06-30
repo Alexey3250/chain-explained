@@ -6,13 +6,14 @@ import { Pill } from "@/components/ui";
 
 const REST = "https://mempool.space/api";
 const WS = "wss://mempool.space/api/v1/ws";
-const G = 40; // grid resolution (G x G cells)
-const UNIT = 320; // vBytes represented by one grid cell (fixed scale)
-const MAXSIDE = 12; // clamp so one whale tx can't dominate
-const MAX_TX = 1600; // cap for perf / grid capacity
+const G = 64; // grid resolution (G x G cells) — smaller cells = smaller boxes
+const UNIT = 300; // vBytes represented by one grid cell (fixed scale)
+const MAXSIDE = 16; // clamp so one whale tx can't dominate
+const MAX_TX = 2000; // cap for perf / grid capacity
 
-type Tile = { x: number; y: number; s: number; fee: number };
+type Tile = { txid: string; x: number; y: number; s: number; fee: number };
 type Tx = { vsize: number; rate: number };
+type Item = { txid: string; vsize: number; rate: number };
 
 /* ---- fee → colour (log scale, green → amber → red) ---- */
 const STOPS: [number, [number, number, number]][] = [
@@ -40,7 +41,7 @@ function feeToColor(f: number): string {
 
 /* ---- grid bin-packing: each tx is a √vsize square snapped to the grid,
        placed highest-fee first with a bottom-left skyline pack ---- */
-function gridPack(items: Tx[]): Tile[] {
+function gridPack(items: Item[]): Tile[] {
   if (!items.length) return [];
   const sorted = items.slice().sort((a, b) => b.rate - a.rate);
   const heights = new Array<number>(G).fill(0);
@@ -65,7 +66,7 @@ function gridPack(items: Tx[]): Tile[] {
     }
     if (bestX < 0) continue; // no room left for this size — drop (lowest fees)
     for (let k = 0; k < s; k++) heights[bestX + k] = bestY + s;
-    out.push({ x: bestX, y: bestY, s, fee: t.rate });
+    out.push({ txid: t.txid, x: bestX, y: bestY, s, fee: t.rate });
   }
   return out;
 }
@@ -167,7 +168,9 @@ export default function Mempool() {
 
     const rebuild = setInterval(() => {
       if (map.size === 0) return;
-      setTiles(gridPack([...map.values()]));
+      const items: Item[] = [];
+      for (const [txid, v] of map) items.push({ txid, vsize: v.vsize, rate: v.rate });
+      setTiles(gridPack(items));
       setDrawn(map.size);
       setSource("transactions");
       setState("ok");
@@ -180,11 +183,12 @@ export default function Mempool() {
         const mp = await fetch(`${REST}/mempool`).then((r) => r.json());
         const hist: [number, number][] = mp.fee_histogram ?? [];
         const totalV = hist.reduce((a, [, v]) => a + v, 0) || 1;
-        const cap = totalV / 700;
-        const items: Tx[] = [];
-        for (const [fee, vsize] of hist) {
+        const cap = totalV / 900;
+        const items: Item[] = [];
+        for (let i = 0; i < hist.length; i++) {
+          const [fee, vsize] = hist[i];
           const n = Math.max(1, Math.min(120, Math.round(vsize / cap)));
-          for (let k = 0; k < n; k++) items.push({ vsize: vsize / n, rate: fee });
+          for (let k = 0; k < n; k++) items.push({ txid: `b${i}_${k}`, vsize: vsize / n, rate: fee });
         }
         setTiles(gridPack(items));
         setSource("fee bands");
@@ -218,14 +222,18 @@ export default function Mempool() {
           <div className="aspect-square w-full border border-border bg-[#0a0c10]">
             {tiles.length > 0 ? (
               <svg viewBox={`0 0 ${G} ${G}`} className="h-full w-full">
-                {tiles.map((t, i) => (
+                {tiles.map((t) => (
                   <rect
-                    key={i}
-                    x={t.x + 0.12}
-                    y={t.y + 0.12}
-                    width={t.s - 0.24}
-                    height={t.s - 0.24}
-                    style={{ fill: feeToColor(t.fee), transition: "fill 0.6s ease-out" }}
+                    key={t.txid}
+                    style={{
+                      x: `${t.x + 0.1}px`,
+                      y: `${t.y + 0.1}px`,
+                      width: `${t.s - 0.2}px`,
+                      height: `${t.s - 0.2}px`,
+                      fill: feeToColor(t.fee),
+                      transition:
+                        "x 0.8s ease, y 0.8s ease, width 0.8s ease, height 0.8s ease, fill 0.8s ease",
+                    }}
                   />
                 ))}
               </svg>
