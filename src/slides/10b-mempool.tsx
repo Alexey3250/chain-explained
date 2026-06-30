@@ -6,10 +6,12 @@ import { Pill } from "@/components/ui";
 
 const REST = "https://mempool.space/api";
 const WS = "wss://mempool.space/api/v1/ws";
-const SIZE = 100; // treemap coordinate space (square)
-const MAX_TX = 1200; // cap tiles for perf
+const G = 40; // grid resolution (G x G cells)
+const UNIT = 320; // vBytes represented by one grid cell (fixed scale)
+const MAXSIDE = 12; // clamp so one whale tx can't dominate
+const MAX_TX = 1600; // cap for perf / grid capacity
 
-type Tile = { x: number; y: number; w: number; h: number; fee: number };
+type Tile = { x: number; y: number; s: number; fee: number };
 type Tx = { vsize: number; rate: number };
 
 /* ---- fee → colour (log scale, green → amber → red) ---- */
@@ -36,62 +38,35 @@ function feeToColor(f: number): string {
   return rgb(STOPS[STOPS.length - 1][1]);
 }
 
-/* ---- squarified treemap (Bruls/Huizing/van Wijk) ---- */
-function squarify(data: { value: number; fee: number }[]): Tile[] {
-  const total = data.reduce((a, d) => a + d.value, 0) || 1;
-  const scale = (SIZE * SIZE) / total;
-  const items = data
-    .map((d) => ({ area: d.value * scale, fee: d.fee }))
-    .sort((a, b) => b.area - a.area);
-
+/* ---- grid bin-packing: each tx is a √vsize square snapped to the grid,
+       placed highest-fee first with a bottom-left skyline pack ---- */
+function gridPack(items: Tx[]): Tile[] {
+  if (!items.length) return [];
+  const sorted = items.slice().sort((a, b) => b.rate - a.rate);
+  const heights = new Array<number>(G).fill(0);
   const out: Tile[] = [];
-  const rect = { x: 0, y: 0, w: SIZE, h: SIZE };
 
-  const worst = (row: { area: number }[], side: number) => {
-    const sum = row.reduce((a, r) => a + r.area, 0);
-    const max = Math.max(...row.map((r) => r.area));
-    const min = Math.min(...row.map((r) => r.area));
-    const s2 = sum * sum;
-    const l2 = side * side;
-    return Math.max((l2 * max) / s2, s2 / (l2 * min));
-  };
+  for (const t of sorted) {
+    if (!Number.isFinite(t.vsize) || t.vsize <= 0) continue;
+    // fixed scale: a normal tx ≈ 1 cell, big txs grow with √vsize
+    let s = Math.round(Math.sqrt(t.vsize / UNIT));
+    s = Math.max(1, Math.min(MAXSIDE, s));
 
-  const place = (row: { area: number; fee: number }[]) => {
-    const sum = row.reduce((a, r) => a + r.area, 0);
-    if (rect.w >= rect.h) {
-      const colW = sum / rect.h;
-      let cy = rect.y;
-      for (const r of row) {
-        const rh = r.area / colW;
-        out.push({ x: rect.x, y: cy, w: colW, h: rh, fee: r.fee });
-        cy += rh;
+    // find the lowest resting slot wide enough for an s-wide square
+    let bestX = -1;
+    let bestY = Infinity;
+    for (let x = 0; x + s <= G; x++) {
+      let y = 0;
+      for (let k = 0; k < s; k++) if (heights[x + k] > y) y = heights[x + k];
+      if (y + s <= G && y < bestY) {
+        bestY = y;
+        bestX = x;
       }
-      rect.x += colW;
-      rect.w -= colW;
-    } else {
-      const rowH = sum / rect.w;
-      let cx = rect.x;
-      for (const r of row) {
-        const rw = r.area / rowH;
-        out.push({ x: cx, y: rect.y, w: rw, h: rowH, fee: r.fee });
-        cx += rw;
-      }
-      rect.y += rowH;
-      rect.h -= rowH;
     }
-  };
-
-  let row: { area: number; fee: number }[] = [];
-  for (const item of items) {
-    const side = Math.min(rect.w, rect.h);
-    if (row.length === 0 || worst([...row, item], side) <= worst(row, side)) {
-      row.push(item);
-    } else {
-      place(row);
-      row = [item];
-    }
+    if (bestX < 0) continue; // no room left for this size — drop (lowest fees)
+    for (let k = 0; k < s; k++) heights[bestX + k] = bestY + s;
+    out.push({ x: bestX, y: bestY, s, fee: t.rate });
   }
-  if (row.length) place(row);
   return out;
 }
 
@@ -133,7 +108,7 @@ export default function Mempool() {
     };
   }, []);
 
-  /* live per-transaction treemap from the WebSocket */
+  /* live per-transaction grid from the WebSocket */
   useEffect(() => {
     const map = txs.current;
     let ws: WebSocket | null = null;
@@ -150,7 +125,8 @@ export default function Mempool() {
       const light = d.transactions as Array<{ txid: string; vsize: number; rate?: number; fee?: number }> | undefined;
       if (Array.isArray(light))
         for (const t of light)
-          if (t.vsize) map.set(t.txid, { vsize: t.vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / t.vsize) });
+          if (Number.isFinite(t.vsize) && t.vsize > 0)
+            map.set(t.txid, { vsize: t.vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / t.vsize) });
 
       const mt = d["mempool-transactions"] as
         | { added?: Array<{ txid: string; vsize?: number; weight?: number; fee?: number; rate?: number }>; removed?: unknown[]; mined?: unknown[]; replaced?: unknown[] }
@@ -159,7 +135,8 @@ export default function Mempool() {
         if (Array.isArray(mt.added))
           for (const t of mt.added) {
             const vsize = t.vsize ?? (t.weight ? t.weight / 4 : 0);
-            if (vsize) map.set(t.txid, { vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / vsize) });
+            if (Number.isFinite(vsize) && vsize > 0)
+              map.set(t.txid, { vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / vsize) });
           }
         for (const key of ["removed", "mined", "replaced"] as const) {
           const arr = mt[key];
@@ -190,8 +167,7 @@ export default function Mempool() {
 
     const rebuild = setInterval(() => {
       if (map.size === 0) return;
-      const items = [...map.values()].map((t) => ({ value: t.vsize, fee: t.rate }));
-      setTiles(squarify(items));
+      setTiles(gridPack([...map.values()]));
       setDrawn(map.size);
       setSource("transactions");
       setState("ok");
@@ -204,13 +180,13 @@ export default function Mempool() {
         const mp = await fetch(`${REST}/mempool`).then((r) => r.json());
         const hist: [number, number][] = mp.fee_histogram ?? [];
         const totalV = hist.reduce((a, [, v]) => a + v, 0) || 1;
-        const cap = totalV / 520;
-        const items: { value: number; fee: number }[] = [];
+        const cap = totalV / 700;
+        const items: Tx[] = [];
         for (const [fee, vsize] of hist) {
           const n = Math.max(1, Math.min(120, Math.round(vsize / cap)));
-          for (let k = 0; k < n; k++) items.push({ value: vsize / n, fee });
+          for (let k = 0; k < n; k++) items.push({ vsize: vsize / n, rate: fee });
         }
-        setTiles(squarify(items));
+        setTiles(gridPack(items));
         setSource("fee bands");
         setState("ok");
       } catch {
@@ -234,23 +210,21 @@ export default function Mempool() {
     <SlideShell
       kicker="the network · live"
       title="inside the mempool, right now"
-      lede="every tile is a real transaction waiting to be mined — sized by its weight in vBytes and coloured by the fee it pays. miners take the brightest tiles first. this is streaming live from the bitcoin network."
+      lede="every square is a real transaction waiting to be mined — its size is the transaction's weight in vBytes, its colour is the fee it pays. highest fees sit up top; that's the order miners take them. streaming live from the bitcoin network."
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        {/* the live treemap */}
+        {/* the live grid */}
         <div className="mx-auto w-full max-w-[420px]">
           <div className="aspect-square w-full border border-border bg-[#0a0c10]">
             {tiles.length > 0 ? (
-              <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="h-full w-full">
+              <svg viewBox={`0 0 ${G} ${G}`} className="h-full w-full">
                 {tiles.map((t, i) => (
                   <rect
                     key={i}
-                    x={t.x}
-                    y={t.y}
-                    width={t.w}
-                    height={t.h}
-                    stroke="#0a0c10"
-                    strokeWidth={0.12}
+                    x={t.x + 0.12}
+                    y={t.y + 0.12}
+                    width={t.s - 0.24}
+                    height={t.s - 0.24}
                     style={{ fill: feeToColor(t.fee), transition: "fill 0.6s ease-out" }}
                   />
                 ))}
@@ -296,9 +270,9 @@ export default function Mempool() {
           <Stat label="drawn here" value={drawn ? `${drawn.toLocaleString()} txs` : "…"} />
 
           <p className="font-mono text-[0.7rem] leading-relaxed text-muted">
-            a big tile is a heavy transaction that eats more block space. the
-            bright ones pay top fees and get mined first; the dim green ones may
-            wait.
+            a big square is a heavy transaction that eats more block space. the
+            bright squares pay top fees and get mined first; the dim green ones
+            may wait.
           </p>
           <p className="font-mono text-[0.65rem] text-faint">
             mempool.space ws · sized by vBytes
