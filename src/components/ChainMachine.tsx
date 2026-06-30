@@ -556,11 +556,17 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       // which of the 3 parts is under inspection this frame (-1 when not verifying)
       const checkStage = st.phase === "verify" ? Math.min(2, Math.floor(phaseT / (VERIFY_MS / 3))) : -1;
 
-      // mempool pixels (selected ones stay put — they're copied, not removed).
-      // skip anything still off-screen (e.g. spawning in past the right edge)
+      // mempool pixels. skip anything still off-screen (e.g. spawning in past
+      // the right edge). transactions the miners have picked for this block stay
+      // in the pool but get banded in the workers' colours — green (top miner)
+      // on top, blue (bottom miner) below — to show they've been claimed.
       for (const t of txs) {
         if (t.x >= CW || t.x <= -TX || t.y >= CH || t.y <= -TX) continue;
         rect(t.x, t.y, PX, PX, t.flash > 0 ? "#eef3ee" : feeToColor(t.fee));
+        if (t.sel) {
+          rect(t.x, t.y, PX, 1, green); // claimed by the green (top) miner
+          rect(t.x, t.y + PX - 1, PX, 1, blue); // claimed by the blue (bottom) miner
+        }
       }
 
       // node robots + scan beams (aim at the block under check while verifying)
