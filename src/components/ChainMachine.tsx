@@ -54,7 +54,7 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
   block: {
     title: "a block",
     term: "a batch of transactions",
-    body: "Each pixel here is one transaction, packed into a single block — about one is sealed every ten minutes. Watch it fill, get hashed, then snap onto the chain.",
+    body: "Each pixel is one transaction. The two bars on top are the block header: the left one is the previous block's hash (fixed — it's the link back), the right one is the nonce, which the miner keeps changing until the hash comes out right.",
   },
   chain: {
     title: "the blockchain",
@@ -83,12 +83,16 @@ type Tx = {
 };
 // a transaction copied toward one miner's block (preserves the tx colour)
 type Copy = { x: number; y: number; tx0: number; ty0: number; fee: number; mb: 0 | 1; slot: number };
-type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[] };
+// a block header: ph = prev-block-hash swatch (fixed), nonce = the nonce swatch
+type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string; nonce: string };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
 type Status = { phase: "idle" | "gather" | "hash" | "found"; winner: number }; // winner: -1 none, 0 green, 1 blue
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const randFee = (intro: boolean) => Math.random() ** 2 * (intro ? 40 : 130) + 1;
+// header swatches stand in for the 256-bit header fields, shown as colour
+const hsl = (h: number, s: number, l: number) => `hsl(${Math.round(h)}, ${s}%, ${l}%)`;
+const randHue = () => Math.random() * 360;
 
 export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const intro = mode === "intro";
@@ -168,6 +172,12 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const formingTop = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
     const formingBot = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
 
+    // header swatches — prev-hash is shared by both miners (same chain tip) and
+    // stays fixed for the round; each miner's nonce drifts while it hashes.
+    let roundPHHue = randHue();
+    let nonceTopHue = randHue();
+    let nonceBotHue = randHue();
+
     const nodes: Node[] = Array.from({ length: intro ? 3 : 4 }, () => ({
       x: rnd(MEM_X0 - 24, CW - 8),
       y: rnd(8, NODE_Y1),
@@ -177,10 +187,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       target: -1,
     }));
 
-    // seed history (alternating winner colours)
+    // seed history (alternating winner colours), each with its own header swatches
     for (let i = 0; i < (intro ? 4 : 7); i++) {
       const x = CHAIN_RIGHT - i * PITCH;
-      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : green, pixels: Array.from({ length: TOTAL }, () => randFee(intro)) });
+      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : green, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: hsl(randHue(), 52, 50), nonce: hsl(randHue(), 60, 55) });
     }
     // seed a visible mempool pile
     const seedPool = Math.min(memCap, intro ? 120 : 220);
@@ -214,6 +224,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       pool.sort((a, b) => b.fee - a.fee);
       formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
+      roundPHHue = randHue(); // new chain tip → new prev-hash for both miners
       copies.length = 0;
       // both miners see the SAME transactions — copy each one to both blocks
       pool.slice(0, TOTAL).forEach((t, k) => {
@@ -230,7 +241,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       const wf = st.winner === 0 ? formingTop : formingBot;
       const color = st.winner === 0 ? green : blue;
       const startY = st.winner === 0 ? TOPB : BOTB;
-      blocks.unshift({ x: ABX, tx: CHAIN_RIGHT, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee) });
+      const nh = st.winner === 0 ? nonceTopHue : nonceBotHue; // the winning nonce, frozen
+      blocks.unshift({ x: ABX, tx: CHAIN_RIGHT, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee), ph: hsl(roundPHHue, 52, 50), nonce: hsl(nh, 60, 55) });
       for (let i = 1; i < blocks.length; i++) blocks[i].tx = CHAIN_RIGHT - i * PITCH;
       // only the confirmed transactions leave the mempool; the rest stay
       for (let i = txs.length - 1; i >= 0; i--) if (txs[i].sel) txs.splice(i, 1);
@@ -273,6 +285,12 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           st.winner = -1;
           phaseT = 0;
         }
+      }
+
+      // while hashing, each miner keeps trying nonces → its nonce swatch drifts
+      if (st.phase === "hash") {
+        nonceTopHue = (nonceTopHue + rnd(4, 12)) % 360;
+        nonceBotHue = (nonceBotHue + rnd(4, 12)) % 360;
       }
 
       // mempool txs drifting into the pool
@@ -375,6 +393,11 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         rect(x + 2 + (i % BN) * TX, y + 2 + Math.floor(i / BN) * TX, PX, PX, filled ? feeToColor(pixels[i] || 1) : "#15171f");
       }
     };
+    // two swatches sitting on top of a block: prev-block-hash (left) + nonce (right)
+    const header = (x: number, y: number, ph: string, nonce: string) => {
+      rect(x + 1, y - 5, 12, 3, ph);
+      rect(x + 15, y - 5, 12, 3, nonce);
+    };
 
     const draw = () => {
       ctx.clearRect(0, 0, CW * S, CH * S);
@@ -407,8 +430,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       const botC = idle ? "#223038" : won ? (st.winner === 1 ? blue : "#223038") : hashing ? (R(phaseT / 90 + 1) % 2 === 0 ? blue : faint) : blue;
       blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
       frame(ABX, TOPB, BLOCK, topC);
+      header(ABX, TOPB, hsl(roundPHHue, 52, 50), hsl(nonceTopHue, 62, 56)); // same prev-hash, own nonce
       blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
       frame(ABX, BOTB, BLOCK, botC);
+      header(ABX, BOTB, hsl(roundPHHue, 52, 50), hsl(nonceBotHue, 62, 56));
       // miner glyphs (pickaxe), animated while hashing
       const tick = hashing && R(phaseT / 70) % 2 ? 1 : 0;
       rect(ABX - 7, TOPB + BLOCK / 2 - 2 + tick, 3, 3, topC);
@@ -421,6 +446,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         const b = blocks[i];
         blockPixels(b.x, b.y, b.pixels);
         frame(b.x, b.y, BLOCK, b.color);
+        header(b.x, b.y, b.ph, b.nonce);
         const right = blocks[i - 1];
         const rightX = right ? right.x : -999;
         if (rightX > b.x) {
@@ -576,7 +602,7 @@ function zone(r: Region): { x: number; y: number; w: number; h: number } {
     case "link":
       return { x: CHAIN_RIGHT - LINK - 2, y: MID + BLOCK / 2 - 7, w: LINK + 6, h: 14 };
     case "block":
-      return { x: ABX - 3, y: TOPB - 3, w: BLOCK + 6, h: BOTB + BLOCK - TOPB + 6 };
+      return { x: ABX - 3, y: TOPB - 6, w: BLOCK + 6, h: BOTB + BLOCK - TOPB + 9 };
     case "miner":
       return { x: ABX - 12, y: TOPB - 2, w: 12, h: BOTB + BLOCK - TOPB + 4 };
     case "mempool":
