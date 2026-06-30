@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { SlideShell } from "@/components/SlideShell";
 import { Pill } from "@/components/ui";
+import { feeToColor } from "@/lib/fee";
 
 const REST = "https://mempool.space/api";
 const WS = "wss://mempool.space/api/v1/ws";
@@ -16,30 +17,6 @@ type Tile = { txid: string; x: number; y: number; s: number; fee: number };
 type Ghost = { key: string; x: number; y: number; s: number; fee: number };
 type Tx = { vsize: number; rate: number; value?: number };
 type Hover = { x: number; y: number; txid: string; fee: number; vsize?: number; value?: number };
-
-/* ---- fee → colour (log scale, green → amber → red) ---- */
-const STOPS: [number, [number, number, number]][] = [
-  [1, [27, 94, 75]],
-  [3, [46, 125, 80]],
-  [8, [124, 170, 60]],
-  [20, [205, 185, 52]],
-  [50, [247, 147, 26]],
-  [150, [229, 103, 95]],
-];
-const rgb = (c: number[]) => `rgb(${c[0]},${c[1]},${c[2]})`;
-function feeToColor(f: number): string {
-  const x = Number.isFinite(f) && f > 0 ? f : 1;
-  if (x <= STOPS[0][0]) return rgb(STOPS[0][1]);
-  for (let i = 1; i < STOPS.length; i++) {
-    if (x <= STOPS[i][0]) {
-      const [f0, c0] = STOPS[i - 1];
-      const [f1, c1] = STOPS[i];
-      const t = (Math.log(x) - Math.log(f0)) / (Math.log(f1) - Math.log(f0));
-      return rgb(c0.map((c, k) => Math.round(c + (c1[k] - c) * t)));
-    }
-  }
-  return rgb(STOPS[STOPS.length - 1][1]);
-}
 
 /* ---- bottom-up gravity packing ----
    Tiles stack from the floor. `bottomY` is a tile's distance (in cells) from
