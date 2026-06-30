@@ -485,8 +485,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       const hashing = st.phase === "hash";
       const won = st.phase === "found";
       const idle = st.phase === "idle" || st.phase === "verify"; // race over → dim the miners
-      const topC = idle ? "#26352e" : won ? (st.winner === 0 ? green : "#26352e") : hashing ? (R(phaseT / 90) % 2 === 0 ? green : faint) : green;
-      const botC = idle ? "#223038" : won ? (st.winner === 1 ? blue : "#223038") : hashing ? (R(phaseT / 90 + 1) % 2 === 0 ? blue : faint) : blue;
+      const topC = idle ? "#26352e" : won ? (st.winner === 0 ? green : "#26352e") : green;
+      const botC = idle ? "#223038" : won ? (st.winner === 1 ? blue : "#223038") : blue;
       blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
       frame(ABX, TOPB, BLOCK, topC);
       header(ABX, TOPB, hsl(roundPHHue, 52, 50), hsl(nonceTopHue, 62, 56)); // same prev-hash, own nonce
