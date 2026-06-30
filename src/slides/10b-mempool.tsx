@@ -1,19 +1,20 @@
 "use client";
 
+import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { SlideShell } from "@/components/SlideShell";
 import { Pill } from "@/components/ui";
 
 const REST = "https://mempool.space/api";
 const WS = "wss://mempool.space/api/v1/ws";
-const G = 64; // grid resolution (G x G cells) — smaller cells = smaller boxes
-const UNIT = 300; // vBytes represented by one grid cell (fixed scale)
+const G = 64; // grid resolution (G x G cells) — small boxes
+const UNIT = 300; // vBytes per grid cell (fixed scale: a normal tx ≈ 1 cell)
 const MAXSIDE = 16; // clamp so one whale tx can't dominate
 const MAX_TX = 2000; // cap for perf / grid capacity
 
 type Tile = { txid: string; x: number; y: number; s: number; fee: number };
+type Ghost = { key: string; x: number; y: number; s: number; fee: number };
 type Tx = { vsize: number; rate: number };
-type Item = { txid: string; vsize: number; rate: number };
 
 /* ---- fee → colour (log scale, green → amber → red) ---- */
 const STOPS: [number, [number, number, number]][] = [
@@ -39,48 +40,41 @@ function feeToColor(f: number): string {
   return rgb(STOPS[STOPS.length - 1][1]);
 }
 
-/* ---- grid bin-packing: each tx is a √vsize square snapped to the grid,
-       placed highest-fee first with a bottom-left skyline pack ---- */
-function gridPack(items: Item[]): Tile[] {
-  if (!items.length) return [];
-  const sorted = items.slice().sort((a, b) => b.rate - a.rate);
-  const heights = new Array<number>(G).fill(0);
-  const out: Tile[] = [];
-
-  for (const t of sorted) {
-    if (!Number.isFinite(t.vsize) || t.vsize <= 0) continue;
-    // fixed scale: a normal tx ≈ 1 cell, big txs grow with √vsize
-    let s = Math.round(Math.sqrt(t.vsize / UNIT));
-    s = Math.max(1, Math.min(MAXSIDE, s));
-
-    // find the lowest resting slot wide enough for an s-wide square
-    let bestX = -1;
-    let bestY = Infinity;
+/* ---- online grid packing (stable positions, fill top-left holes) ---- */
+function findSlot(occ: Uint8Array, s: number): { x: number; y: number } | null {
+  for (let y = 0; y + s <= G; y++) {
     for (let x = 0; x + s <= G; x++) {
-      let y = 0;
-      for (let k = 0; k < s; k++) if (heights[x + k] > y) y = heights[x + k];
-      if (y + s <= G && y < bestY) {
-        bestY = y;
-        bestX = x;
-      }
+      let ok = true;
+      for (let dy = 0; dy < s && ok; dy++)
+        for (let dx = 0; dx < s; dx++)
+          if (occ[(y + dy) * G + (x + dx)]) {
+            ok = false;
+            break;
+          }
+      if (ok) return { x, y };
     }
-    if (bestX < 0) continue; // no room left for this size — drop (lowest fees)
-    for (let k = 0; k < s; k++) heights[bestX + k] = bestY + s;
-    out.push({ txid: t.txid, x: bestX, y: bestY, s, fee: t.rate });
   }
-  return out;
+  return null;
+}
+function setOcc(occ: Uint8Array, x: number, y: number, s: number, v: number) {
+  for (let dy = 0; dy < s; dy++)
+    for (let dx = 0; dx < s; dx++) occ[(y + dy) * G + (x + dx)] = v;
 }
 
 const cleanRate = (r: number) => (Number.isFinite(r) && r > 0 ? r : 1);
 
 export default function Mempool() {
   const [tiles, setTiles] = useState<Tile[]>([]);
+  const [ghosts, setGhosts] = useState<Ghost[]>([]);
+  const ghostN = useRef(0);
   const [drawn, setDrawn] = useState(0);
   const [stats, setStats] = useState<{ count: number; vsizeMB: number; fastestFee: number } | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [source, setSource] = useState<"transactions" | "fee bands">("transactions");
 
   const txs = useRef<Map<string, Tx>>(new Map());
+  const placed = useRef<Map<string, { x: number; y: number; s: number; fee: number }>>(new Map());
+  const occ = useRef<Uint8Array>(new Uint8Array(G * G));
 
   /* headline stats from REST, polled */
   useEffect(() => {
@@ -98,7 +92,7 @@ export default function Mempool() {
             fastestFee: fees?.fastestFee ?? 0,
           });
       } catch {
-        /* stats are non-critical */
+        /* non-critical */
       }
     };
     poll();
@@ -109,12 +103,53 @@ export default function Mempool() {
     };
   }, []);
 
-  /* live per-transaction grid from the WebSocket */
+  /* live treemap: maintain stable tile positions, animate in/out */
   useEffect(() => {
     const map = txs.current;
+    const place = placed.current;
+    const grid = occ.current;
     let ws: WebSocket | null = null;
     let closed = false;
     let gotData = false;
+
+    // reconcile placed tiles against the current transaction set
+    const sync = () => {
+      // remove tiles that left the mempool (mined / replaced) → free their cells
+      // and spin them off as fading "ghosts" so they animate out
+      const leaving: Ghost[] = [];
+      for (const id of [...place.keys()]) {
+        if (!map.has(id)) {
+          const t = place.get(id)!;
+          setOcc(grid, t.x, t.y, t.s, 0);
+          leaving.push({ key: `${id}__g${ghostN.current++}`, x: t.x, y: t.y, s: t.s, fee: t.fee });
+          place.delete(id);
+        }
+      }
+      if (leaving.length) {
+        setGhosts((g) => [...g, ...leaving]);
+        const keys = new Set(leaving.map((l) => l.key));
+        setTimeout(() => setGhosts((g) => g.filter((x) => !keys.has(x.key))), 600);
+      }
+      // place new transactions, highest fee first, into the top-most free hole
+      const fresh: [string, Tx][] = [];
+      for (const [id, v] of map)
+        if (!place.has(id) && Number.isFinite(v.vsize) && v.vsize > 0) fresh.push([id, v]);
+      fresh.sort((a, b) => b[1].rate - a[1].rate);
+      for (const [id, v] of fresh) {
+        const want = Math.max(1, Math.min(MAXSIDE, Math.round(Math.sqrt(v.vsize / UNIT))));
+        let slot: { x: number; y: number } | null = null;
+        let s = want;
+        for (s = want; s >= 1; s--) {
+          slot = findSlot(grid, s);
+          if (slot) break;
+        }
+        if (!slot) continue; // grid full
+        setOcc(grid, slot.x, slot.y, s, 1);
+        place.set(id, { x: slot.x, y: slot.y, s, fee: v.rate });
+      }
+      setTiles([...place.entries()].map(([id, t]) => ({ txid: id, ...t })));
+      setDrawn(place.size);
+    };
 
     const onMsg = (e: MessageEvent) => {
       let d: Record<string, unknown>;
@@ -168,13 +203,10 @@ export default function Mempool() {
 
     const rebuild = setInterval(() => {
       if (map.size === 0) return;
-      const items: Item[] = [];
-      for (const [txid, v] of map) items.push({ txid, vsize: v.vsize, rate: v.rate });
-      setTiles(gridPack(items));
-      setDrawn(map.size);
+      sync();
       setSource("transactions");
       setState("ok");
-    }, 1500);
+    }, 1200);
 
     // fallback to REST fee-bands if the socket never delivers
     const fallback = setTimeout(async () => {
@@ -184,13 +216,12 @@ export default function Mempool() {
         const hist: [number, number][] = mp.fee_histogram ?? [];
         const totalV = hist.reduce((a, [, v]) => a + v, 0) || 1;
         const cap = totalV / 900;
-        const items: Item[] = [];
         for (let i = 0; i < hist.length; i++) {
           const [fee, vsize] = hist[i];
           const n = Math.max(1, Math.min(120, Math.round(vsize / cap)));
-          for (let k = 0; k < n; k++) items.push({ txid: `b${i}_${k}`, vsize: vsize / n, rate: fee });
+          for (let k = 0; k < n; k++) map.set(`b${i}_${k}`, { vsize: vsize / n, rate: fee });
         }
-        setTiles(gridPack(items));
+        sync();
         setSource("fee bands");
         setState("ok");
       } catch {
@@ -214,26 +245,32 @@ export default function Mempool() {
     <SlideShell
       kicker="the network · live"
       title="inside the mempool, right now"
-      lede="every square is a real transaction waiting to be mined — its size is the transaction's weight in vBytes, its colour is the fee it pays. highest fees sit up top; that's the order miners take them. streaming live from the bitcoin network."
+      lede="every square is a real transaction waiting to be mined — sized by its weight in vBytes, coloured by its fee. they drop in as they arrive and vanish the instant a miner sweeps them into a block. streaming live."
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        {/* the live grid */}
+        {/* the live, animated grid */}
         <div className="mx-auto w-full max-w-[420px]">
-          <div className="aspect-square w-full border border-border bg-[#0a0c10]">
+          <div className="aspect-square w-full overflow-hidden border border-border bg-[#0a0c10]">
             {tiles.length > 0 ? (
               <svg viewBox={`0 0 ${G} ${G}`} className="h-full w-full">
+                {/* active transactions — drop in from the top */}
                 {tiles.map((t) => (
-                  <rect
+                  <motion.rect
                     key={t.txid}
-                    style={{
-                      x: `${t.x + 0.1}px`,
-                      y: `${t.y + 0.1}px`,
-                      width: `${t.s - 0.2}px`,
-                      height: `${t.s - 0.2}px`,
-                      fill: feeToColor(t.fee),
-                      transition:
-                        "x 0.8s ease, y 0.8s ease, width 0.8s ease, height 0.8s ease, fill 0.8s ease",
-                    }}
+                    initial={{ opacity: 0, x: t.x + 0.1, y: -(t.s + 2), width: t.s - 0.2, height: t.s - 0.2 }}
+                    animate={{ opacity: 1, x: t.x + 0.1, y: t.y + 0.1, width: t.s - 0.2, height: t.s - 0.2 }}
+                    transition={{ duration: 0.45, ease: "easeOut" }}
+                    style={{ fill: feeToColor(t.fee) }}
+                  />
+                ))}
+                {/* departing transactions — fade + shrink out when mined */}
+                {ghosts.map((g) => (
+                  <motion.rect
+                    key={g.key}
+                    initial={{ opacity: 1, x: g.x + 0.1, y: g.y + 0.1, width: g.s - 0.2, height: g.s - 0.2 }}
+                    animate={{ opacity: 0, scale: 0.3 }}
+                    transition={{ duration: 0.5, ease: "easeIn" }}
+                    style={{ fill: feeToColor(g.fee), transformBox: "fill-box", transformOrigin: "center" }}
                   />
                 ))}
               </svg>
@@ -278,9 +315,8 @@ export default function Mempool() {
           <Stat label="drawn here" value={drawn ? `${drawn.toLocaleString()} txs` : "…"} />
 
           <p className="font-mono text-[0.7rem] leading-relaxed text-muted">
-            a big square is a heavy transaction that eats more block space. the
-            bright squares pay top fees and get mined first; the dim green ones
-            may wait.
+            watch a square pop in when a transaction is broadcast, and disappear
+            the moment it gets mined. big square = heavy tx; bright = high fee.
           </p>
           <p className="font-mono text-[0.65rem] text-faint">
             mempool.space ws · sized by vBytes
