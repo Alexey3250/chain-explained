@@ -82,8 +82,19 @@ type Tx = {
   sel: boolean; // selected for the current round — stays in the mempool until confirmed
   flash: number;
 };
-// a transaction copied toward one miner's block (preserves the tx colour)
-type Copy = { x: number; y: number; tx0: number; ty0: number; fee: number; mb: 0 | 1; slot: number };
+// a transaction copied toward one miner's block (preserves the tx colour): it
+// flies up from the mempool, then falls and stacks into the block, tetris-style.
+type Copy = {
+  x: number;
+  y: number;
+  cx: number; // target column x
+  fee: number;
+  mb: 0 | 1; // which miner's block
+  col: number; // which column it drops into
+  delay: number; // ms before it leaves the mempool (staggers the stream)
+  phase: "wait" | "fly" | "fall";
+  vy: number; // fall velocity
+};
 // a block header: ph = prev-block-hash swatch (fixed), nonce = the nonce swatch
 type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string; nonce: string };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
@@ -172,6 +183,11 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const blocks: Blk[] = [];
     const formingTop = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
     const formingBot = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
+    // how many transactions have stacked in each column (for tetris-style fill)
+    const stackTop = Array.from({ length: BN }, () => 0);
+    const stackBot = Array.from({ length: BN }, () => 0);
+    const STAGGER = 16; // ms between transactions leaving the mempool
+    const GRAV = 1500; // fall acceleration (px/s²)
 
     // header swatches — prev-hash is shared by both miners (same chain tip) and
     // stays fixed for the round; each miner's nonce drifts while it hashes.
@@ -229,15 +245,26 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       pool.sort((a, b) => b.fee - a.fee);
       formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
+      stackTop.fill(0);
+      stackBot.fill(0);
       roundPHHue = randHue(); // new chain tip → new prev-hash for both miners
       copies.length = 0;
+      // a shuffled bag of columns (each used BN times) → transactions rain into
+      // random columns and pile up, instead of filling in a rigid raster
+      const bag: number[] = [];
+      for (let col = 0; col < BN; col++) for (let r = 0; r < BN; r++) bag.push(col);
+      for (let i = bag.length - 1; i > 0; i--) {
+        const j = (Math.random() * (i + 1)) | 0;
+        [bag[i], bag[j]] = [bag[j], bag[i]];
+      }
       // both miners see the SAME transactions — copy each one to both blocks
       pool.slice(0, TOTAL).forEach((t, k) => {
         t.sel = true;
-        const cx = ABX + 2 + (k % BN) * TX;
-        const cy = 2 + Math.floor(k / BN) * TX;
-        copies.push({ x: t.x, y: t.y, tx0: cx, ty0: TOPB + cy, fee: vary(t.fee), mb: 0, slot: k });
-        copies.push({ x: t.x, y: t.y, tx0: cx, ty0: BOTB + cy, fee: vary(t.fee), mb: 1, slot: k });
+        const col = bag[k];
+        const colX = ABX + 2 + col * TX;
+        const delay = k * STAGGER;
+        copies.push({ x: t.x, y: t.y, cx: colX, fee: vary(t.fee), mb: 0, col, delay, phase: "wait", vy: 0 });
+        copies.push({ x: t.x, y: t.y, cx: colX, fee: vary(t.fee), mb: 1, col, delay, phase: "wait", vy: 0 });
       });
       return true;
     };
@@ -334,16 +361,45 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
         if (t.flash > 0) t.flash -= dt;
       }
-      // copies flying from the mempool into BOTH blocks (their colour preserved)
+      // copies leave the mempool, fly above their column, then FALL and stack
+      // into BOTH blocks (their colour preserved for continuity)
       for (let i = copies.length - 1; i >= 0; i--) {
         const c = copies[i];
-        c.x += (c.tx0 - c.x) * Math.min(1, k * 4);
-        c.y += (c.ty0 - c.y) * Math.min(1, k * 4);
-        if (Math.abs(c.x - c.tx0) < 0.5 && Math.abs(c.y - c.ty0) < 0.5) {
-          const fb = c.mb === 0 ? formingTop : formingBot;
-          fb[c.slot].fee = c.fee;
-          fb[c.slot].filled = true;
-          copies.splice(i, 1); // arrived → it becomes the block pixel
+        if (c.phase === "wait") {
+          c.delay -= dt;
+          if (c.delay <= 0) c.phase = "fly";
+          continue;
+        }
+        const blockTop = c.mb === 0 ? TOPB : BOTB;
+        if (c.phase === "fly") {
+          const fy = blockTop - 9; // hover just above the block, lined up with the column
+          c.x += (c.cx - c.x) * Math.min(1, k * 6);
+          c.y += (fy - c.y) * Math.min(1, k * 6);
+          if (Math.abs(c.x - c.cx) < 0.9 && Math.abs(c.y - fy) < 1.5) {
+            c.phase = "fall";
+            c.x = c.cx;
+            c.vy = 0;
+          }
+        } else {
+          // gravity: fall straight down onto the top of this column's stack
+          const sh = c.mb === 0 ? stackTop : stackBot;
+          if (sh[c.col] >= BN) {
+            copies.splice(i, 1); // column full (shouldn't happen) — safety
+            continue;
+          }
+          c.x = c.cx;
+          c.vy += GRAV * k;
+          c.y += c.vy * k;
+          const row = BN - 1 - sh[c.col];
+          const floorY = blockTop + 2 + row * TX;
+          if (c.y >= floorY) {
+            const fb = c.mb === 0 ? formingTop : formingBot;
+            const idx = row * BN + c.col;
+            fb[idx].fee = c.fee;
+            fb[idx].filled = true;
+            sh[c.col]++;
+            copies.splice(i, 1); // landed → it becomes the block pixel
+          }
         }
       }
 
@@ -478,9 +534,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         rect(n.x + 1, n.y + 1, 1, 1, accent);
       }
 
-      // transactions copied toward both blocks (their mempool colour preserved)
-      for (const c of copies) rect(c.x, c.y, PX, PX, feeToColor(c.fee));
-
       // two miners racing — top (green), bottom (blue) — always on screen
       const hashing = st.phase === "hash";
       const won = st.phase === "found";
@@ -499,6 +552,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       rect(ABX - 9, TOPB + BLOCK / 2 + 2, 6, 1, topC);
       rect(ABX - 7, BOTB + BLOCK / 2 - 2 + tick, 3, 3, botC);
       rect(ABX - 9, BOTB + BLOCK / 2 + 2, 6, 1, botC);
+
+      // transactions falling into the blocks, drawn on top so they drop INTO the
+      // grid (mempool colour preserved for continuity)
+      for (const c of copies) rect(c.x, c.y, PX, PX, feeToColor(c.fee));
 
       // chain blocks (winner's colour outline) + 1px links
       for (let i = blocks.length - 1; i >= 0; i--) {
