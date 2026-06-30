@@ -149,11 +149,20 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     return () => clearInterval(id);
   }, [intro, reduced]);
 
-  // mirror the mining status into React for the overlay (throttled)
+  // mirror the mining status into React for the overlay — only when it actually
+  // changes, so we don't re-render the whole component 10×/second for nothing
   useEffect(() => {
     if (reduced) return;
+    let lastPhase = "";
+    let lastWinner = -2;
     const id = setInterval(() => {
-      if (visibleRef.current) setStatus({ ...statusRef.current });
+      if (!visibleRef.current) return;
+      const s = statusRef.current;
+      if (s.phase !== lastPhase || s.winner !== lastWinner) {
+        lastPhase = s.phase;
+        lastWinner = s.winner;
+        setStatus({ phase: s.phase, winner: s.winner });
+      }
     }, 100);
     return () => clearInterval(id);
   }, [reduced]);
@@ -610,6 +619,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     let raf = 0;
     let last = 0;
+    let acc = 0;
+    const FRAME = 1000 / 60; // cap the sim+draw at ~60fps regardless of refresh rate
 
     if (reduced) {
       for (let i = 0; i < 80; i++) spawnTx();
@@ -622,11 +633,18 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       raf = requestAnimationFrame(loop);
       if (!visibleRef.current) {
         last = t;
+        acc = 0;
         return;
       }
       if (!last) last = t;
-      const dt = Math.min(60, t - last);
+      const elapsed = t - last;
       last = t;
+      // throttle work to ~60fps on high-refresh / uncapped displays (the rAF
+      // callback can fire 120–480×/s; running step+draw that often is wasteful)
+      acc += elapsed > 250 ? FRAME : elapsed; // a long gap = backgrounded, don't catch up
+      if (acc < FRAME) return;
+      const dt = Math.min(60, acc);
+      acc = Math.min(acc - FRAME, FRAME);
       step(dt);
       draw();
     };
