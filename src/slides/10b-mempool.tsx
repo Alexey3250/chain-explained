@@ -15,7 +15,7 @@ const MAX_TX = 2000; // cap for perf / grid capacity
 type Tile = { txid: string; x: number; y: number; s: number; fee: number };
 type Ghost = { key: string; x: number; y: number; s: number; fee: number };
 type Tx = { vsize: number; rate: number; value?: number };
-type Hover = { x: number; y: number; txid: string; fee: number };
+type Hover = { x: number; y: number; txid: string; fee: number; vsize?: number; value?: number };
 
 /* ---- fee → colour (log scale, green → amber → red) ---- */
 const STOPS: [number, [number, number, number]][] = [
@@ -41,25 +41,28 @@ function feeToColor(f: number): string {
   return rgb(STOPS[STOPS.length - 1][1]);
 }
 
-/* ---- online grid packing (stable positions, fill top-left holes) ---- */
-function findSlot(occ: Uint8Array, s: number): { x: number; y: number } | null {
-  for (let y = 0; y + s <= G; y++) {
-    for (let x = 0; x + s <= G; x++) {
-      let ok = true;
-      for (let dy = 0; dy < s && ok; dy++)
-        for (let dx = 0; dx < s; dx++)
-          if (occ[(y + dy) * G + (x + dx)]) {
-            ok = false;
-            break;
-          }
-      if (ok) return { x, y };
-    }
-  }
-  return null;
+/* ---- bottom-up gravity packing ----
+   Tiles stack from the floor. `bottomY` is a tile's distance (in cells) from
+   the bottom. New tiles fall into the lowest column that fits; when a tile
+   leaves, a settle pass drops everything above straight down into the gap. */
+type Placed = { x: number; bottomY: number; s: number; fee: number };
+
+// lowest resting height across columns [x, x+s)
+function restHeight(heights: number[], x: number, s: number): number {
+  let m = 0;
+  for (let k = 0; k < s; k++) if (heights[x + k] > m) m = heights[x + k];
+  return m;
 }
-function setOcc(occ: Uint8Array, x: number, y: number, s: number, v: number) {
-  for (let dy = 0; dy < s; dy++)
-    for (let dx = 0; dx < s; dx++) occ[(y + dy) * G + (x + dx)] = v;
+
+// drop every tile as low as it can go, keeping its column (x) fixed
+function settle(place: Map<string, Placed>) {
+  const arr = [...place.values()].sort((a, b) => a.bottomY - b.bottomY || a.x - b.x);
+  const heights = new Array<number>(G).fill(0);
+  for (const t of arr) {
+    const rest = restHeight(heights, t.x, t.s);
+    t.bottomY = rest;
+    for (let k = 0; k < t.s; k++) heights[t.x + k] = rest + t.s;
+  }
 }
 
 const cleanRate = (r: number) => (Number.isFinite(r) && r > 0 ? r : 1);
@@ -75,8 +78,7 @@ export default function Mempool() {
   const [source, setSource] = useState<"transactions" | "fee bands">("transactions");
 
   const txs = useRef<Map<string, Tx>>(new Map());
-  const placed = useRef<Map<string, { x: number; y: number; s: number; fee: number }>>(new Map());
-  const occ = useRef<Uint8Array>(new Uint8Array(G * G));
+  const placed = useRef<Map<string, Placed>>(new Map());
 
   /* headline stats from REST, polled */
   useEffect(() => {
@@ -109,21 +111,24 @@ export default function Mempool() {
   useEffect(() => {
     const map = txs.current;
     const place = placed.current;
-    const grid = occ.current;
     let ws: WebSocket | null = null;
     let closed = false;
     let gotData = false;
 
     // reconcile placed tiles against the current transaction set
     const sync = () => {
-      // remove tiles that left the mempool (mined / replaced) → free their cells
-      // and spin them off as fading "ghosts" so they animate out
+      // 1. transactions that left the mempool (mined / replaced) → fade out as ghosts
       const leaving: Ghost[] = [];
       for (const id of [...place.keys()]) {
         if (!map.has(id)) {
           const t = place.get(id)!;
-          setOcc(grid, t.x, t.y, t.s, 0);
-          leaving.push({ key: `${id}__g${ghostN.current++}`, x: t.x, y: t.y, s: t.s, fee: t.fee });
+          leaving.push({
+            key: `${id}__g${ghostN.current++}`,
+            x: t.x,
+            y: G - (t.bottomY + t.s),
+            s: t.s,
+            fee: t.fee,
+          });
           place.delete(id);
         }
       }
@@ -132,24 +137,46 @@ export default function Mempool() {
         const keys = new Set(leaving.map((l) => l.key));
         setTimeout(() => setGhosts((g) => g.filter((x) => !keys.has(x.key))), 600);
       }
-      // place new transactions, highest fee first, into the top-most free hole
+
+      // 2. current column heights from the tiles that remain
+      const heights = new Array<number>(G).fill(0);
+      for (const t of place.values())
+        for (let k = 0; k < t.s; k++)
+          heights[t.x + k] = Math.max(heights[t.x + k], t.bottomY + t.s);
+
+      // 3. drop new transactions (highest fee first) into the lowest column that fits
       const fresh: [string, Tx][] = [];
       for (const [id, v] of map)
         if (!place.has(id) && Number.isFinite(v.vsize) && v.vsize > 0) fresh.push([id, v]);
       fresh.sort((a, b) => b[1].rate - a[1].rate);
       for (const [id, v] of fresh) {
-        const want = Math.max(1, Math.min(MAXSIDE, Math.round(Math.sqrt(v.vsize / UNIT))));
-        let slot: { x: number; y: number } | null = null;
-        let s = want;
-        for (s = want; s >= 1; s--) {
-          slot = findSlot(grid, s);
-          if (slot) break;
+        const s = Math.max(1, Math.min(MAXSIDE, Math.round(Math.sqrt(v.vsize / UNIT))));
+        let bestX = -1;
+        let bestY = Infinity;
+        for (let x = 0; x + s <= G; x++) {
+          const rest = restHeight(heights, x, s);
+          if (rest < bestY) {
+            bestY = rest;
+            bestX = x;
+          }
         }
-        if (!slot) continue; // grid full
-        setOcc(grid, slot.x, slot.y, s, 1);
-        place.set(id, { x: slot.x, y: slot.y, s, fee: v.rate });
+        if (bestX < 0 || bestY + s > G) continue; // stack is full
+        for (let k = 0; k < s; k++) heights[bestX + k] = bestY + s;
+        place.set(id, { x: bestX, bottomY: bestY, s, fee: v.rate });
       }
-      setTiles([...place.entries()].map(([id, t]) => ({ txid: id, ...t })));
+
+      // 4. gravity: everything falls straight down into any freed space
+      settle(place);
+
+      setTiles(
+        [...place.entries()].map(([id, t]) => ({
+          txid: id,
+          x: t.x,
+          y: G - (t.bottomY + t.s),
+          s: t.s,
+          fee: t.fee,
+        })),
+      );
       setDrawn(place.size);
     };
 
@@ -270,7 +297,10 @@ export default function Mempool() {
                       animate={{ opacity: 1, x: t.x + 0.1, y: t.y + 0.1, width: t.s - 0.2, height: t.s - 0.2 }}
                       transition={{ duration: 0.45, ease: "easeOut" }}
                       style={{ fill: feeToColor(t.fee), cursor: real ? "pointer" : "default" }}
-                      onMouseEnter={(e) => setHover({ x: e.clientX, y: e.clientY, txid: t.txid, fee: t.fee })}
+                      onMouseEnter={(e) => {
+                        const info = txs.current.get(t.txid);
+                        setHover({ x: e.clientX, y: e.clientY, txid: t.txid, fee: t.fee, vsize: info?.vsize, value: info?.value });
+                      }}
                       onMouseMove={(e) => setHover((h) => (h && h.txid === t.txid ? { ...h, x: e.clientX, y: e.clientY } : h))}
                       onMouseLeave={() => setHover((h) => (h && h.txid === t.txid ? null : h))}
                       onClick={() => real && window.open(`https://mempool.space/tx/${t.txid}`, "_blank", "noopener")}
@@ -341,12 +371,12 @@ export default function Mempool() {
         </div>
       </div>
 
-      {hover && <TxTooltip hover={hover} info={txs.current.get(hover.txid)} />}
+      {hover && <TxTooltip hover={hover} />}
     </SlideShell>
   );
 }
 
-function TxTooltip({ hover, info }: { hover: Hover; info?: Tx }) {
+function TxTooltip({ hover }: { hover: Hover }) {
   const real = hover.txid.length === 64;
   const vw = typeof window !== "undefined" ? window.innerWidth : 9999;
   const left = Math.min(hover.x + 14, vw - 224);
@@ -367,13 +397,13 @@ function TxTooltip({ hover, info }: { hover: Hover; info?: Tx }) {
       </div>
       <div className="flex justify-between gap-3">
         <span className="text-faint">size</span>
-        <span className="text-fg">{info ? Math.round(info.vsize).toLocaleString() : "—"} vB</span>
+        <span className="text-fg">{hover.vsize != null ? Math.round(hover.vsize).toLocaleString() : "—"} vB</span>
       </div>
       <div className="flex justify-between gap-3">
         <span className="text-faint">value</span>
         <span className="text-fg">
-          {info && info.value != null
-            ? (info.value / 1e8).toLocaleString(undefined, { maximumFractionDigits: 4 })
+          {hover.value != null
+            ? (hover.value / 1e8).toLocaleString(undefined, { maximumFractionDigits: 4 })
             : "—"}{" "}
           BTC
         </span>
