@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import { SlideShell } from "@/components/SlideShell";
 import { Pill } from "@/components/ui";
-import Replisome from "@/components/Replisome";
+import ChainMachine from "@/components/ChainMachine";
 
 const REPO = "https://github.com/Alexey3250/chain-explained";
 
@@ -25,14 +25,14 @@ export default function Outro() {
         </h2>
 
         <p className="mt-3 max-w-2xl font-mono text-sm leading-relaxed text-muted">
-          the whole machine, running at once: helicase = proof-of-work, every
-          strand a copy = every node, polymerase = miners, Okazaki fragments =
-          blocks, ligase = the prev-hash links. tap or hover any part to check
-          you recognise it.
+          the whole machine, running at once: transactions gather in the
+          mempool, nodes validate them, a miner packs a block, and it links onto
+          the chain — old blocks fading into history. tap or hover any part to
+          check you recognise it.
         </p>
 
         <div className="mt-5">
-          <Replisome mode="outro" />
+          <ChainMachine mode="outro" />
         </div>
 
         <div className="mt-5 flex flex-wrap items-center gap-3">

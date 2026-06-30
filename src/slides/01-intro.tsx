@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import { SlideShell } from "@/components/SlideShell";
 import { Pill } from "@/components/ui";
-import Replisome from "@/components/Replisome";
+import ChainMachine from "@/components/ChainMachine";
 
 export default function Intro() {
   return (
@@ -16,10 +16,10 @@ export default function Intro() {
           className="font-mono text-xs leading-relaxed text-faint"
         >
           <div>
-            $ ./replisome <span className="text-muted">--copy=ledger</span>
+            $ ./bitcoind <span className="text-muted">--watch=mempool</span>
           </div>
           <div>
-            unwinding chain tip <span className="text-faint">........</span>{" "}
+            syncing the chain <span className="text-faint">........</span>{" "}
             <span className="text-green">ok</span>
           </div>
         </motion.div>
@@ -39,9 +39,9 @@ export default function Intro() {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="mt-3 max-w-2xl font-mono text-sm leading-relaxed text-muted"
         >
-          the ledger copies itself like DNA — one block at a time, onto every
-          node that runs it. here&apos;s that machine, alive. tap or hover any
-          part to see what it really is.
+          payments pile up in the mempool, nodes check them, a miner packs them
+          into a block, and it links onto the chain. here&apos;s that machine,
+          alive — tap or hover any part to see what it does.
         </motion.p>
 
         <motion.div
@@ -50,7 +50,7 @@ export default function Intro() {
           transition={{ duration: 0.6, delay: 0.3 }}
           className="mt-5"
         >
-          <Replisome mode="intro" />
+          <ChainMachine mode="intro" />
         </motion.div>
 
         <motion.div
@@ -59,7 +59,7 @@ export default function Intro() {
           transition={{ duration: 0.5, delay: 0.5 }}
           className="mt-5 flex flex-wrap items-center gap-3"
         >
-          <Pill tone="accent">live cellular model</Pill>
+          <Pill tone="accent">live model</Pill>
           <Pill>10 steps</Pill>
           <span className="ml-auto font-mono text-sm text-faint">
             press <span className="text-accent">→</span> to begin{" "}
