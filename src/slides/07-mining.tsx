@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { SlideShell } from "@/components/SlideShell";
 import { Btn, Panel, Pill, Reveal } from "@/components/ui";
 import { sha256Hex } from "@/lib/hash";
+import MiningRace from "@/components/MiningRace";
 
 const BLOCK = "Block 840,002 · Bob→Alice 0.5 BTC · prev 0000a91f · nonce:";
 
@@ -51,7 +52,15 @@ export default function Mining() {
       title="Mining is a guessing game"
       lede="To add a block, miners must find a nonce that makes the block's hash start with enough zeros. There's no shortcut — you just guess, billions of times."
     >
-      <div className="grid flex-1 items-start gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      <div className="flex flex-col gap-7">
+      <Reveal>
+        <div className="mb-1 font-mono text-xs text-faint">
+          {"// the race — a few miners hashing for the next block, live"}
+        </div>
+        <MiningRace mode="outro" />
+      </Reveal>
+
+      <div className="grid items-start gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <Reveal>
           <Panel className="p-6">
             <div className="flex items-center justify-between">
@@ -133,6 +142,7 @@ export default function Mining() {
             exactly what we&apos;ll attack on the next slide.
           </div>
         </Reveal>
+      </div>
       </div>
     </SlideShell>
   );
