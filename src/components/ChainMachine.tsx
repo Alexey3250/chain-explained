@@ -32,6 +32,7 @@ const MID = ASSEM_Y - BLOCK / 2; // the chain row (block top)
 const TOPB = MID - 38; // top miner block (green)
 const BOTB = MID + 38; // bottom miner block (blue)
 const ABX = ASSEM_X - BLOCK / 2; // assembly block x
+const VERIFY_X = 210; // centre stage where the winning block is checked before joining
 
 type Region = "chain" | "link" | "block" | "miner" | "mempool" | "nodes";
 
@@ -86,7 +87,7 @@ type Copy = { x: number; y: number; tx0: number; ty0: number; fee: number; mb: 0
 // a block header: ph = prev-block-hash swatch (fixed), nonce = the nonce swatch
 type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string; nonce: string };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
-type Status = { phase: "idle" | "gather" | "hash" | "found"; winner: number }; // winner: -1 none, 0 green, 1 blue
+type Status = { phase: "idle" | "gather" | "hash" | "found" | "verify"; winner: number }; // winner: -1 none, 0 green, 1 blue
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const randFee = (intro: boolean) => Math.random() ** 2 * (intro ? 40 : 130) + 1;
@@ -177,6 +178,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     let roundPHHue = randHue();
     let nonceTopHue = randHue();
     let nonceBotHue = randHue();
+    // the winning block, after it leaves a miner and before it joins the chain:
+    // it slides to centre stage where the nodes check its 3 parts.
+    let verifying: Blk | null = null;
 
     const nodes: Node[] = Array.from({ length: intro ? 3 : 4 }, () => ({
       x: rnd(MEM_X0 - 24, CW - 8),
@@ -206,7 +210,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const spawnEvery = intro ? 150 : 80;
     const IDLE_MS = intro ? 2600 : 1500;
     const HASH_MS = intro ? 2800 : 1900;
-    const FOUND_MS = 1000;
+    const FOUND_MS = 850;
+    const VERIFY_MS = intro ? 2100 : 1500; // nodes check the 3 parts in sequence (~700ms each)
 
     const spawnTx = () => {
       if (txs.length >= memCap) return;
@@ -237,18 +242,29 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       return true;
     };
 
-    const seal = () => {
+    // promote the winning miner block to centre stage for verification
+    const startVerify = () => {
       const wf = st.winner === 0 ? formingTop : formingBot;
       const color = st.winner === 0 ? green : blue;
       const startY = st.winner === 0 ? TOPB : BOTB;
       const nh = st.winner === 0 ? nonceTopHue : nonceBotHue; // the winning nonce, frozen
-      blocks.unshift({ x: ABX, tx: CHAIN_RIGHT, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee), ph: hsl(roundPHHue, 52, 50), nonce: hsl(nh, 60, 55) });
+      verifying = { x: ABX, tx: VERIFY_X, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee), ph: hsl(roundPHHue, 52, 50), nonce: hsl(nh, 60, 55) };
+      formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
+      formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
+      copies.length = 0;
+    };
+
+    // checks passed → the verified block joins the chain tip
+    const seal = () => {
+      if (verifying) {
+        verifying.tx = CHAIN_RIGHT;
+        verifying.ty = MID;
+        blocks.unshift(verifying);
+        verifying = null;
+      }
       for (let i = 1; i < blocks.length; i++) blocks[i].tx = CHAIN_RIGHT - i * PITCH;
       // only the confirmed transactions leave the mempool; the rest stay
       for (let i = txs.length - 1; i >= 0; i--) if (txs[i].sel) txs.splice(i, 1);
-      copies.length = 0;
-      formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
-      formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
       setMinted((m) => m + 1);
     };
 
@@ -280,7 +296,13 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
       } else if (st.phase === "found") {
         if (phaseT >= FOUND_MS) {
-          seal();
+          startVerify(); // winner slides to centre stage
+          st.phase = "verify";
+          phaseT = 0;
+        }
+      } else if (st.phase === "verify") {
+        if (phaseT >= VERIFY_MS) {
+          seal(); // checks passed → join the chain
           st.phase = "idle";
           st.winner = -1;
           phaseT = 0;
@@ -291,6 +313,12 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       if (st.phase === "hash") {
         nonceTopHue = (nonceTopHue + rnd(4, 12)) % 360;
         nonceBotHue = (nonceBotHue + rnd(4, 12)) % 360;
+      }
+      // the winning block easing toward centre stage (and later the chain tip)
+      if (verifying) {
+        const e = Math.min(1, k * 3);
+        verifying.x += (verifying.tx - verifying.x) * e;
+        verifying.y += (verifying.ty - verifying.y) * e;
       }
 
       // mempool txs drifting into the pool
@@ -319,14 +347,29 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
       }
 
-      // nodes
-      for (const n of nodes) {
+      // nodes — roam the top strip, but swarm the block while it's being checked
+      for (let idx = 0; idx < nodes.length; idx++) {
+        const n = nodes[idx];
+        if (st.phase === "verify" && verifying) {
+          const ang = (idx / nodes.length) * Math.PI * 2;
+          const ox = verifying.x + BLOCK / 2 - 2 + Math.cos(ang) * 24;
+          const oy = verifying.y + BLOCK / 2 - 2 + Math.sin(ang) * 20;
+          n.x += (ox - n.x) * Math.min(1, k * 4);
+          n.y += (oy - n.y) * Math.min(1, k * 4);
+          n.target = -1;
+          continue;
+        }
         n.x += n.vx * k;
         n.y += n.vy * k;
         if (n.x < MEM_X0 - 24 || n.x > CW - 8) n.vx *= -1;
-        if (n.y < 8 || n.y > NODE_Y1) n.vy *= -1;
         n.x = Math.max(MEM_X0 - 24, Math.min(CW - 8, n.x));
-        n.y = Math.max(8, Math.min(NODE_Y1, n.y));
+        if (n.y < 8) {
+          n.y = 8;
+          n.vy = Math.abs(n.vy);
+        } else if (n.y > NODE_Y1) {
+          n.vy = -Math.abs(n.vy);
+          n.y += (NODE_Y1 - n.y) * Math.min(1, k * 2.5); // ease back after swarming
+        }
         n.t -= dt / 1000;
         if (n.t <= 0) {
           n.t = rnd(0.8, 2.2);
@@ -398,19 +441,35 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       rect(x + 1, y - 5, 12, 3, ph);
       rect(x + 15, y - 5, 12, 3, nonce);
     };
+    // 1px rectangle outline (rectangular sibling of frame)
+    const box = (x: number, y: number, w: number, h: number, c: string) => {
+      rect(x, y, w, 1, c);
+      rect(x, y + h - 1, w, 1, c);
+      rect(x, y, 1, h, c);
+      rect(x + w - 1, y, 1, h, c);
+    };
+
+    // centre of the part the nodes are currently checking (0 prev-hash, 1 nonce, 2 txs)
+    const partPt = (v: Blk, s: number): [number, number] =>
+      s <= 0 ? [v.x + 7, v.y - 4] : s === 1 ? [v.x + 21, v.y - 4] : [v.x + BLOCK / 2, v.y + BLOCK / 2];
 
     const draw = () => {
       ctx.clearRect(0, 0, CW * S, CH * S);
       const hov = hoveredRef.current;
+      // which of the 3 parts is under inspection this frame (-1 when not verifying)
+      const checkStage = st.phase === "verify" ? Math.min(2, Math.floor(phaseT / (VERIFY_MS / 3))) : -1;
 
       // mempool pixels (selected ones stay put — they're copied, not removed)
       for (const t of txs) {
         rect(t.x, t.y, PX, PX, t.flash > 0 ? "#eef3ee" : feeToColor(t.fee));
       }
 
-      // node robots + scan beams
+      // node robots + scan beams (aim at the block under check while verifying)
       for (const n of nodes) {
-        if (n.target >= 0 && txs[n.target] && txs[n.target].phase === "pool") {
+        if (verifying && checkStage >= 0) {
+          const [px, py] = partPt(verifying, checkStage);
+          pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
+        } else if (n.target >= 0 && txs[n.target] && txs[n.target].phase === "pool") {
           pixLine(n.x + 2, n.y + 4, txs[n.target].x + 1, txs[n.target].y + 1, "rgba(91,155,213,0.7)");
         }
         rect(n.x, n.y, 4, 4, blue);
@@ -425,7 +484,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       // two miners racing — top (green), bottom (blue) — always on screen
       const hashing = st.phase === "hash";
       const won = st.phase === "found";
-      const idle = st.phase === "idle";
+      const idle = st.phase === "idle" || st.phase === "verify"; // race over → dim the miners
       const topC = idle ? "#26352e" : won ? (st.winner === 0 ? green : "#26352e") : hashing ? (R(phaseT / 90) % 2 === 0 ? green : faint) : green;
       const botC = idle ? "#223038" : won ? (st.winner === 1 ? blue : "#223038") : hashing ? (R(phaseT / 90 + 1) % 2 === 0 ? blue : faint) : blue;
       blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
@@ -453,6 +512,25 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           const lx = b.x + BLOCK;
           const lw = rightX - lx;
           if (lw > 0 && lw <= LINK + 2) rect(lx, MID + Math.floor(BLOCK / 2) - 1, lw, 1, accent); // 1px chain link
+        }
+      }
+
+      // the winning block at centre stage, nodes checking its 3 parts in turn
+      if (verifying) {
+        const v = verifying;
+        blockPixels(v.x, v.y, v.pixels);
+        frame(v.x, v.y, BLOCK, v.color);
+        header(v.x, v.y, v.ph, v.nonce);
+        const pulse = R(phaseT / 90) % 2 === 0;
+        const regions: [number, number, number, number][] = [
+          [v.x, v.y - 6, 14, 5], // prev-hash swatch
+          [v.x + 14, v.y - 6, 14, 5], // nonce swatch
+          [v.x, v.y, BLOCK, BLOCK], // the transactions
+        ];
+        for (let s = 0; s < 3; s++) {
+          const [bx, by, bw, bh] = regions[s];
+          if (s < checkStage) box(bx, by, bw, bh, green); // passed
+          else if (s === checkStage) box(bx, by, bw, bh, pulse ? "#eef3ee" : accent); // checking now
         }
       }
 
@@ -568,10 +646,11 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
             {status.phase === "hash" && <span className="text-accent">⛏ two miners racing for the block…</span>}
             {status.phase === "found" &&
               (status.winner === 0 ? (
-                <span className="text-green">✓ green miner found it — block added</span>
+                <span className="text-green">✓ green miner found a valid hash</span>
               ) : (
-                <span className="text-blue">✓ blue miner found it — block added</span>
+                <span className="text-blue">✓ blue miner found a valid hash</span>
               ))}
+            {status.phase === "verify" && <span className="text-accent">nodes checking: prev-hash · nonce · transactions →</span>}
             {status.phase === "gather" && <span className="text-muted">packing transactions…</span>}
           </span>
         </div>
