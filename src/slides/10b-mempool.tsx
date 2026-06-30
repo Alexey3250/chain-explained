@@ -1,19 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SlideShell } from "@/components/SlideShell";
 import { Pill } from "@/components/ui";
 
-const API = "https://mempool.space/api";
+const REST = "https://mempool.space/api";
+const WS = "wss://mempool.space/api/v1/ws";
 const SIZE = 100; // treemap coordinate space (square)
+const MAX_TX = 1200; // cap tiles for perf
 
 type Tile = { x: number; y: number; w: number; h: number; fee: number };
-type Data = {
-  count: number;
-  vsizeMB: number;
-  fastestFee: number;
-  tiles: Tile[];
-};
+type Tx = { vsize: number; rate: number };
 
 /* ---- fee → colour (log scale, green → amber → red) ---- */
 const STOPS: [number, [number, number, number]][] = [
@@ -26,7 +23,7 @@ const STOPS: [number, [number, number, number]][] = [
 ];
 const rgb = (c: number[]) => `rgb(${c[0]},${c[1]},${c[2]})`;
 function feeToColor(f: number): string {
-  const x = Math.max(1, f);
+  const x = Number.isFinite(f) && f > 0 ? f : 1;
   if (x <= STOPS[0][0]) return rgb(STOPS[0][1]);
   for (let i = 1; i < STOPS.length; i++) {
     if (x <= STOPS[i][0]) {
@@ -40,9 +37,7 @@ function feeToColor(f: number): string {
 }
 
 /* ---- squarified treemap (Bruls/Huizing/van Wijk) ---- */
-function squarify(
-  data: { value: number; fee: number }[],
-): Tile[] {
+function squarify(data: { value: number; fee: number }[]): Tile[] {
   const total = data.reduce((a, d) => a + d.value, 0) || 1;
   const scale = (SIZE * SIZE) / total;
   const items = data
@@ -61,7 +56,7 @@ function squarify(
     return Math.max((l2 * max) / s2, s2 / (l2 * min));
   };
 
-  const layout = (row: { area: number; fee: number }[]) => {
+  const place = (row: { area: number; fee: number }[]) => {
     const sum = row.reduce((a, r) => a + r.area, 0);
     if (rect.w >= rect.h) {
       const colW = sum / rect.h;
@@ -92,67 +87,162 @@ function squarify(
     if (row.length === 0 || worst([...row, item], side) <= worst(row, side)) {
       row.push(item);
     } else {
-      layout(row);
+      place(row);
       row = [item];
     }
   }
-  if (row.length) layout(row);
+  if (row.length) place(row);
   return out;
 }
 
-export default function Mempool() {
-  const [data, setData] = useState<Data | null>(null);
-  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+const cleanRate = (r: number) => (Number.isFinite(r) && r > 0 ? r : 1);
 
-  const load = useCallback(async () => {
-    try {
-      const [mp, fees] = await Promise.all([
-        fetch(`${API}/mempool`).then((r) => r.json()),
-        fetch(`${API}/v1/fees/recommended`).then((r) => r.json()),
-      ]);
-      const hist: [number, number][] = mp.fee_histogram ?? [];
-      // split big fee-bands into many capped tiles so it reads as a dense
-      // mosaic (area stays proportional to block space)
-      const totalV = hist.reduce((a, [, v]) => a + v, 0) || 1;
-      const cap = totalV / 520;
-      const items: { value: number; fee: number }[] = [];
-      for (const [fee, vsize] of hist) {
-        const n = Math.max(1, Math.min(120, Math.round(vsize / cap)));
-        for (let k = 0; k < n; k++) items.push({ value: vsize / n, fee });
+export default function Mempool() {
+  const [tiles, setTiles] = useState<Tile[]>([]);
+  const [drawn, setDrawn] = useState(0);
+  const [stats, setStats] = useState<{ count: number; vsizeMB: number; fastestFee: number } | null>(null);
+  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+  const [source, setSource] = useState<"transactions" | "fee bands">("transactions");
+
+  const txs = useRef<Map<string, Tx>>(new Map());
+
+  /* headline stats from REST, polled */
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const [mp, fees] = await Promise.all([
+          fetch(`${REST}/mempool`).then((r) => r.json()),
+          fetch(`${REST}/v1/fees/recommended`).then((r) => r.json()),
+        ]);
+        if (alive)
+          setStats({
+            count: mp.count ?? 0,
+            vsizeMB: (mp.vsize ?? 0) / 1_000_000,
+            fastestFee: fees?.fastestFee ?? 0,
+          });
+      } catch {
+        /* stats are non-critical */
       }
-      const tiles = squarify(items);
-      setData({
-        count: mp.count ?? 0,
-        vsizeMB: (mp.vsize ?? 0) / 1_000_000,
-        fastestFee: fees?.fastestFee ?? 0,
-        tiles,
-      });
-      setState("ok");
-    } catch {
-      setState("error");
-    }
+    };
+    poll();
+    const id = setInterval(poll, 10_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
   }, []);
 
+  /* live per-transaction treemap from the WebSocket */
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    load();
-    const id = setInterval(load, 6000);
-    return () => clearInterval(id);
-  }, [load]);
+    const map = txs.current;
+    let ws: WebSocket | null = null;
+    let closed = false;
+    let gotData = false;
+
+    const onMsg = (e: MessageEvent) => {
+      let d: Record<string, unknown>;
+      try {
+        d = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      const light = d.transactions as Array<{ txid: string; vsize: number; rate?: number; fee?: number }> | undefined;
+      if (Array.isArray(light))
+        for (const t of light)
+          if (t.vsize) map.set(t.txid, { vsize: t.vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / t.vsize) });
+
+      const mt = d["mempool-transactions"] as
+        | { added?: Array<{ txid: string; vsize?: number; weight?: number; fee?: number; rate?: number }>; removed?: unknown[]; mined?: unknown[]; replaced?: unknown[] }
+        | undefined;
+      if (mt) {
+        if (Array.isArray(mt.added))
+          for (const t of mt.added) {
+            const vsize = t.vsize ?? (t.weight ? t.weight / 4 : 0);
+            if (vsize) map.set(t.txid, { vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / vsize) });
+          }
+        for (const key of ["removed", "mined", "replaced"] as const) {
+          const arr = mt[key];
+          if (Array.isArray(arr))
+            for (const x of arr) {
+              const id = typeof x === "string" ? x : (x as { txid?: string })?.txid;
+              if (id) map.delete(id);
+            }
+        }
+      }
+      while (map.size > MAX_TX) map.delete(map.keys().next().value as string);
+      gotData = true;
+    };
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(WS);
+      } catch {
+        return;
+      }
+      ws.onopen = () => ws?.send(JSON.stringify({ "track-mempool": true }));
+      ws.onmessage = onMsg;
+      ws.onclose = () => {
+        if (!closed) setTimeout(connect, 3000);
+      };
+    };
+    connect();
+
+    const rebuild = setInterval(() => {
+      if (map.size === 0) return;
+      const items = [...map.values()].map((t) => ({ value: t.vsize, fee: t.rate }));
+      setTiles(squarify(items));
+      setDrawn(map.size);
+      setSource("transactions");
+      setState("ok");
+    }, 1500);
+
+    // fallback to REST fee-bands if the socket never delivers
+    const fallback = setTimeout(async () => {
+      if (gotData) return;
+      try {
+        const mp = await fetch(`${REST}/mempool`).then((r) => r.json());
+        const hist: [number, number][] = mp.fee_histogram ?? [];
+        const totalV = hist.reduce((a, [, v]) => a + v, 0) || 1;
+        const cap = totalV / 520;
+        const items: { value: number; fee: number }[] = [];
+        for (const [fee, vsize] of hist) {
+          const n = Math.max(1, Math.min(120, Math.round(vsize / cap)));
+          for (let k = 0; k < n; k++) items.push({ value: vsize / n, fee });
+        }
+        setTiles(squarify(items));
+        setSource("fee bands");
+        setState("ok");
+      } catch {
+        setState("error");
+      }
+    }, 9000);
+
+    return () => {
+      closed = true;
+      clearInterval(rebuild);
+      clearTimeout(fallback);
+      try {
+        ws?.close();
+      } catch {
+        /* noop */
+      }
+    };
+  }, []);
 
   return (
     <SlideShell
       kicker="the network · live"
       title="inside the mempool, right now"
-      lede="every transaction waiting to be mined, drawn to scale. each tile is a band of transactions paying a similar fee — bigger means more block space, brighter means a higher fee. this is the live backlog."
+      lede="every tile is a real transaction waiting to be mined — sized by its weight in vBytes and coloured by the fee it pays. miners take the brightest tiles first. this is streaming live from the bitcoin network."
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        {/* the treemap — the star */}
+        {/* the live treemap */}
         <div className="mx-auto w-full max-w-[420px]">
           <div className="aspect-square w-full border border-border bg-[#0a0c10]">
-            {data ? (
+            {tiles.length > 0 ? (
               <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="h-full w-full">
-                {data.tiles.map((t, i) => (
+                {tiles.map((t, i) => (
                   <rect
                     key={i}
                     x={t.x}
@@ -167,7 +257,7 @@ export default function Mempool() {
               </svg>
             ) : (
               <div className="flex h-full items-center justify-center font-mono text-xs text-faint">
-                {state === "error" ? "network unreachable" : "connecting…"}
+                {state === "error" ? "network unreachable" : "listening to the network…"}
               </div>
             )}
           </div>
@@ -197,22 +287,21 @@ export default function Mempool() {
                 state === "ok" ? "animate-pulse bg-green" : state === "error" ? "bg-red" : "bg-accent"
               }`}
             />
-            {state === "ok" ? "live · bitcoin network" : state === "error" ? "offline" : "connecting…"}
+            {state === "ok" ? `live · ${source}` : state === "error" ? "offline" : "connecting…"}
           </Pill>
 
-          <Stat label="transactions waiting" value={data ? data.count.toLocaleString() : "…"} />
-          <Stat label="total backlog" value={data ? `${data.vsizeMB.toFixed(1)} vMB` : "…"} />
-          <Stat
-            label="to get in next block"
-            value={data ? `~${data.fastestFee} sat/vB` : "…"}
-          />
+          <Stat label="transactions waiting" value={stats ? stats.count.toLocaleString() : "…"} />
+          <Stat label="total backlog" value={stats ? `${stats.vsizeMB.toFixed(1)} vMB` : "…"} />
+          <Stat label="to get in next block" value={stats ? `~${stats.fastestFee} sat/vB` : "…"} />
+          <Stat label="drawn here" value={drawn ? `${drawn.toLocaleString()} txs` : "…"} />
 
           <p className="font-mono text-[0.7rem] leading-relaxed text-muted">
-            miners fill the next ~1 MB block from the top fees down. the green
-            mass at the bottom may wait hours; the bright tiles get mined first.
+            a big tile is a heavy transaction that eats more block space. the
+            bright ones pay top fees and get mined first; the dim green ones may
+            wait.
           </p>
           <p className="font-mono text-[0.65rem] text-faint">
-            mempool.space · refreshes every 6s
+            mempool.space ws · sized by vBytes
           </p>
         </div>
       </div>
@@ -223,9 +312,7 @@ export default function Mempool() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="border border-border bg-bg-soft px-3 py-2">
-      <div className="font-mono text-[0.6rem] uppercase tracking-widest text-faint">
-        {label}
-      </div>
+      <div className="font-mono text-[0.6rem] uppercase tracking-widest text-faint">{label}</div>
       <div className="font-mono text-base font-semibold text-fg">{value}</div>
     </div>
   );
