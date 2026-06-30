@@ -8,6 +8,7 @@ import Blocks from "./06-blocks";
 import Mining from "./07-mining";
 import ChainDemo from "./08-chain";
 import Network from "./09-network";
+import Mempool from "./10b-mempool";
 import BigPicture from "./10-bigpicture";
 import Outro from "./11-outro";
 
@@ -28,6 +29,7 @@ export const slides: Slide[] = [
   { id: "mining", title: "Proof of work", chapter: "Consensus", Component: Mining },
   { id: "chain", title: "Immutability", chapter: "Consensus", Component: ChainDemo },
   { id: "network", title: "The network", chapter: "Consensus", Component: Network },
+  { id: "mempool", title: "The mempool (live)", chapter: "Big picture", Component: Mempool },
   { id: "bigpicture", title: "The big picture", chapter: "Big picture", Component: BigPicture },
   { id: "outro", title: "You're done", chapter: "Big picture", Component: Outro },
 ];
