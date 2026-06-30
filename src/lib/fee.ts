@@ -12,9 +12,7 @@ const STOPS: [number, [number, number, number]][] = [
 
 const rgb = (c: number[]) => `rgb(${c[0]},${c[1]},${c[2]})`;
 
-/** Map a fee rate (sat/vB) to a colour on the green→amber→red scale. */
-export function feeToColor(f: number): string {
-  const x = Number.isFinite(f) && f > 0 ? f : 1;
+function compute(x: number): string {
   if (x <= STOPS[0][0]) return rgb(STOPS[0][1]);
   for (let i = 1; i < STOPS.length; i++) {
     if (x <= STOPS[i][0]) {
@@ -25,4 +23,22 @@ export function feeToColor(f: number): string {
     }
   }
   return rgb(STOPS[STOPS.length - 1][1]);
+}
+
+// canvas animations call this for every pixel every frame (tens of thousands of
+// times a second). Memoise on a whole-sat/vB fee so the hot path becomes a Map
+// lookup instead of a log + string allocation. The key is clamped to 1..150, so
+// the cache holds at most ~150 entries — bounded, no leak.
+const cache = new Map<number, string>();
+
+/** Map a fee rate (sat/vB) to a colour on the green→amber→red scale (memoised). */
+export function feeToColor(f: number): string {
+  const x = Number.isFinite(f) && f > 0 ? f : 1;
+  const key = x >= 150 ? 150 : Math.max(1, Math.round(x));
+  let c = cache.get(key);
+  if (c === undefined) {
+    c = compute(key);
+    cache.set(key, c);
+  }
+  return c;
 }
