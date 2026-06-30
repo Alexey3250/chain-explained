@@ -543,10 +543,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
       // two miners racing — top (green), bottom (blue) — always on screen
       const hashing = st.phase === "hash";
-      const won = st.phase === "found";
-      const idle = st.phase === "idle" || st.phase === "verify"; // race over → dim the miners
-      const topC = idle ? "#26352e" : won ? (st.winner === 0 ? green : "#26352e") : green;
-      const botC = idle ? "#223038" : won ? (st.winner === 1 ? blue : "#223038") : blue;
+      // the miners keep their colours at all times — green on top, blue below —
+      // so they never grey out or disappear between rounds
+      const topC = green;
+      const botC = blue;
       blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
       frame(ABX, TOPB, BLOCK, topC);
       header(ABX, TOPB, hsl(roundPHHue, 52, 50), hsl(nonceTopHue, 62, 56)); // same prev-hash, own nonce
