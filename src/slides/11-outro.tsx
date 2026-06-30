@@ -25,9 +25,10 @@ export default function Outro() {
         </h2>
 
         <p className="mt-3 max-w-2xl font-mono text-sm leading-relaxed text-muted">
-          the whole machine, running at once: helicase = proof-of-work, the
-          template = every node, polymerase = miners, Okazaki fragments = blocks,
-          ligase = the prev-hash links. hover any part to check you recognise it.
+          the whole machine, running at once: helicase = proof-of-work, every
+          strand a copy = every node, polymerase = miners, Okazaki fragments =
+          blocks, ligase = the prev-hash links. tap or hover any part to check
+          you recognise it.
         </p>
 
         <div className="mt-5">
@@ -40,7 +41,7 @@ export default function Outro() {
             href={REPO}
             target="_blank"
             rel="noopener noreferrer"
-            className="border border-accent px-3.5 py-2 font-mono text-sm text-accent transition hover:bg-accent hover:text-[#0b0c10]"
+            className="border border-accent px-3.5 py-2 font-mono text-sm text-accent transition hover:bg-accent hover:text-bg"
           >
             [ view source ]
           </a>

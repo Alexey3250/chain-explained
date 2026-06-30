@@ -197,7 +197,7 @@ export default function Deck() {
           onClick={next}
           disabled={index === slides.length - 1}
           aria-label="Next slide"
-          className="border border-accent px-2.5 py-1 text-accent transition hover:bg-accent hover:text-[#0b0c10] disabled:opacity-30"
+          className="border border-accent px-2.5 py-1 text-accent transition hover:bg-accent hover:text-bg disabled:opacity-30"
         >
           [ next ]
         </button>

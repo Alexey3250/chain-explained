@@ -93,7 +93,7 @@ export function Btn({
     "inline-flex items-center justify-center gap-2 border px-3.5 py-2 font-mono text-sm transition disabled:opacity-40 disabled:cursor-not-allowed";
   const styles =
     variant === "primary"
-      ? "border-accent text-accent hover:bg-accent hover:text-[#0b0c10]"
+      ? "border-accent text-accent hover:bg-accent hover:text-bg"
       : "border-border text-muted hover:border-fg hover:text-fg";
   return (
     <button

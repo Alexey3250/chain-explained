@@ -40,8 +40,8 @@ export default function Intro() {
           className="mt-3 max-w-2xl font-mono text-sm leading-relaxed text-muted"
         >
           the ledger copies itself like DNA — one block at a time, onto every
-          machine on earth. here&apos;s that machine, alive. hover any part to
-          see what it really is.
+          node that runs it. here&apos;s that machine, alive. tap or hover any
+          part to see what it really is.
         </motion.p>
 
         <motion.div

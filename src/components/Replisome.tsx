@@ -43,13 +43,13 @@ const MAP: Record<Region, { dna: string; btc: string; title: string; body: strin
     dna: "Semiconservative copying",
     btc: "Every node holds a full copy",
     title: "every node, a full copy",
-    body: "DNA copies so each daughter keeps a whole strand. Likewise there's no master server — every node carries the entire ledger, so it survives even if most vanish.",
+    body: "Each new double-strand keeps one original strand and builds a fresh one beside it — the whole sequence preserved in every copy. Likewise there's no master server: every node carries the entire ledger, so it survives even if most vanish.",
   },
   leading: {
     dna: "Leading strand",
     btc: "The main chain extending",
     title: "the main chain",
-    body: "One strand is copied in a smooth continuous run toward the fork — the longest chain growing steadily, block after block.",
+    body: "The new strand is copied in one direction along the template — like the single chain, always extended at its tip, one block at a time.",
   },
   lagging: {
     dna: "Lagging strand · Okazaki fragments",
@@ -73,7 +73,7 @@ const MAP: Record<Region, { dna: string; btc: string; title: string; body: strin
     dna: "Ligase",
     btc: "prev-block-hash link",
     title: "the prev-hash weld",
-    body: "Ligase welds each new block to the one before it. The prev-block-hash is that weld — making the whole chain one continuous, tamper-evident strand.",
+    body: "Ligase welds each new block to the one before it. The prev-block-hash is that weld — and because it's computed from the previous block's contents, changing any old block breaks every link after it. That's what makes the chain tamper-evident.",
   },
   soup: {
     dna: "Free nucleotide pool",
@@ -90,14 +90,14 @@ type Block = { id: number; fee: number };
 
 const idx = (x: number, y: number) => y * COLS + x;
 const inGrid = (x: number, y: number) => x >= 0 && x < COLS && y >= 0 && y < ROWS;
-// soup lives ahead of the fork + thin top/bottom margins
-const soupZone = (x: number, y: number) => x >= STATION + 2 || y < 4 || y >= ROWS - 4;
+// soup lives ahead of the fork (the nucleotide pool around the active site)
+const soupZone = (x: number) => x >= STATION + 4;
 
 export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
   const intro = mode === "intro";
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [hovered, setHovered] = useState<Region | null>(null);
-  const [tour, setTour] = useState<Region | null>(null);
+  const [tour, setTour] = useState<Region | null>(intro ? null : "soup");
   const [minted, setMinted] = useState(intro ? 6 : 11);
   const [reduced, setReduced] = useState(false);
 
@@ -115,11 +115,13 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // reduced-motion
+  // reduced-motion (live — tracks runtime toggles)
   useEffect(() => {
     const m = window.matchMedia("(prefers-reduced-motion: reduce)");
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setReduced(m.matches);
+    const on = () => setReduced(m.matches);
+    on();
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
   }, []);
 
   // pause work when the slide isn't on screen
@@ -168,18 +170,8 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
     const randFee = () => Math.random() ** 2 * (intro ? 30 : 120) + 1;
     const seed = (n: number) => {
       for (let k = 0; k < n; k++) {
-        // bias toward the right (denser, fresher mempool)
-        const x = STATION + 2 + Math.floor(Math.random() * (COLS - STATION - 2));
+        const x = STATION + 4 + Math.floor(Math.random() * (COLS - STATION - 4));
         const y = Math.floor(Math.random() * ROWS);
-        if (soupZone(x, y)) {
-          life[idx(x, y)] = 1;
-          fee[idx(x, y)] = randFee();
-        }
-      }
-      // a little ambient life in the margins
-      for (let k = 0; k < n / 3; k++) {
-        const x = Math.floor(Math.random() * COLS);
-        const y = Math.random() < 0.5 ? Math.floor(Math.random() * 4) : ROWS - 1 - Math.floor(Math.random() * 4);
         life[idx(x, y)] = 1;
         fee[idx(x, y)] = randFee();
       }
@@ -189,7 +181,7 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
     const step = () => {
       for (let y = 0; y < ROWS; y++) {
         for (let x = 0; x < COLS; x++) {
-          if (!soupZone(x, y)) {
+          if (!soupZone(x)) {
             next[idx(x, y)] = 0;
             continue;
           }
@@ -276,10 +268,10 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
   const info = eff ? MAP[eff] : null;
 
   return (
-    <div ref={wrapRef} className="w-full">
+    <div ref={wrapRef} className="w-full" data-no-swipe>
       {/* the stage */}
       <div
-        className="relative w-full overflow-hidden border border-border bg-[#08090d]"
+        className="relative w-full overflow-hidden border border-border bg-bg"
         style={{ aspectRatio: `${COLS} / ${ROWS}` }}
       >
         <canvas
@@ -295,7 +287,13 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
           aria-hidden
         />
 
-        <svg viewBox={`0 0 ${COLS} ${ROWS}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="none">
+        <svg
+          viewBox={`0 0 ${COLS} ${ROWS}`}
+          className="absolute inset-0 h-full w-full"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="A DNA-replication machine copying the Bitcoin ledger — hover or focus its parts to inspect them."
+        >
           {/* ---- decorative machine (no pointer events) ---- */}
           <g style={{ pointerEvents: "none" }}>
             {/* sealed double-strand backbones (the copies on every node) */}
@@ -335,7 +333,7 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
                     width={BLK}
                     height={BLK}
                     fill={feeToColor(b.fee)}
-                    stroke="#08090d"
+                    stroke="var(--bg)"
                     strokeWidth={0.4}
                   />
                 );
@@ -361,27 +359,41 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
             />
           </g>
 
-          {/* ---- transparent hover hit-regions (on top) ---- */}
-          <g>
-            <HitRect r="soup" x={STATION + 2} y={0} w={COLS - STATION - 2} h={ROWS} set={setHovered} />
+          {/* ---- transparent hover/focus hit-regions (on top) ---- */}
+          <g role="group" aria-label="Inspect the replication machine">
+            {/* background catches taps on empty space to clear the inspector */}
+            <rect
+              x={0}
+              y={0}
+              width={COLS}
+              height={ROWS}
+              fill="transparent"
+              onClick={() => setHovered(null)}
+            />
+            <HitRect r="soup" x={STATION + 4} y={0} w={COLS - STATION - 4} h={ROWS} set={setHovered} />
             <HitRect r="copies" x={0} y={TOP_BACK - 1} w={4} h={BOT_BACK - TOP_BACK + 2} set={setHovered} />
             <HitRect r="leading" x={4} y={TOP_BACK - 1.5} w={STATION - 9} h={3} set={setHovered} />
             <HitRect r="lagging" x={4} y={BOT_BACK - 1.5} w={STATION - 9} h={3} set={setHovered} />
             <HitRect r="ledger" x={4} y={MID - 3} w={STATION - 11} h={6} set={setHovered} />
-            <HitRect r="ligase" x={STATION - PITCH - 1.5} y={MID - 3} w={2.5} h={6} set={setHovered} />
             <HitRect r="polymerase" x={STATION - 6} y={TOP_BACK - 2} w={5} h={BOT_BACK - TOP_BACK + 4} set={setHovered} />
-            <HitRect r="fork" x={STATION - 0.5} y={TOP_BACK - 1} w={6} h={BOT_BACK - TOP_BACK + 2} set={setHovered} />
+            <HitRect r="fork" x={STATION - 0.5} y={TOP_BACK - 1} w={4.5} h={BOT_BACK - TOP_BACK + 2} set={setHovered} />
+            {/* ligase last so it wins over polymerase, aligned to its weld */}
+            <HitRect r="ligase" x={STATION - PITCH - 1.5} y={MID - 3} w={3} h={6} set={setHovered} />
           </g>
         </svg>
 
         {/* corner readout */}
-        <div className="pointer-events-none absolute right-2 top-2 font-mono text-[0.6rem] text-faint">
+        <div className="pointer-events-none absolute right-2 top-2 font-mono text-[0.65rem] text-muted">
           {intro ? "replisome · idling" : `blocks copied · ${minted.toLocaleString()}`}
         </div>
       </div>
 
       {/* inspector */}
-      <div className="mt-2 border border-border bg-panel/60 p-3 text-left font-mono">
+      <div
+        className="mt-2 border border-border bg-panel/60 p-3 text-left font-mono"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {info ? (
           <div>
             <div className="text-[0.7rem] tracking-wide text-accent">{`// ${info.title}`}</div>
@@ -393,9 +405,9 @@ export default function Replisome({ mode }: { mode: "intro" | "outro" }) {
             <p className="mt-1.5 text-xs leading-relaxed text-muted">{info.body}</p>
           </div>
         ) : (
-          <div className="text-xs text-faint">
-            {`// inspect`} · hover any part of the machine to see what it really is{" "}
-            <span className="text-accent blink">█</span>
+          <div className="text-xs text-muted">
+            {`// inspect`} · tap or hover any part of the machine to see what it
+            really is <span className="text-accent blink">█</span>
           </div>
         )}
       </div>
@@ -425,10 +437,21 @@ function HitRect({
       width={w}
       height={h}
       fill="transparent"
-      style={{ cursor: "pointer" }}
+      tabIndex={0}
+      role="button"
+      aria-label={MAP[r].btc}
+      style={{ cursor: "pointer", outline: "none" }}
       onMouseEnter={() => set(r)}
       onMouseLeave={() => set(null)}
+      onFocus={() => set(r)}
+      onBlur={() => set(null)}
       onClick={() => set(r)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          set(r);
+        }
+      }}
     />
   );
 }
