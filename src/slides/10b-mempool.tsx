@@ -14,7 +14,8 @@ const MAX_TX = 2000; // cap for perf / grid capacity
 
 type Tile = { txid: string; x: number; y: number; s: number; fee: number };
 type Ghost = { key: string; x: number; y: number; s: number; fee: number };
-type Tx = { vsize: number; rate: number };
+type Tx = { vsize: number; rate: number; value?: number };
+type Hover = { x: number; y: number; txid: string; fee: number };
 
 /* ---- fee → colour (log scale, green → amber → red) ---- */
 const STOPS: [number, [number, number, number]][] = [
@@ -68,6 +69,7 @@ export default function Mempool() {
   const [ghosts, setGhosts] = useState<Ghost[]>([]);
   const ghostN = useRef(0);
   const [drawn, setDrawn] = useState(0);
+  const [hover, setHover] = useState<Hover | null>(null);
   const [stats, setStats] = useState<{ count: number; vsizeMB: number; fastestFee: number } | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [source, setSource] = useState<"transactions" | "fee bands">("transactions");
@@ -158,21 +160,25 @@ export default function Mempool() {
       } catch {
         return;
       }
-      const light = d.transactions as Array<{ txid: string; vsize: number; rate?: number; fee?: number }> | undefined;
+      const light = d.transactions as Array<{ txid: string; vsize: number; rate?: number; fee?: number; value?: number }> | undefined;
       if (Array.isArray(light))
         for (const t of light)
           if (Number.isFinite(t.vsize) && t.vsize > 0)
-            map.set(t.txid, { vsize: t.vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / t.vsize) });
+            map.set(t.txid, { vsize: t.vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / t.vsize), value: t.value });
 
       const mt = d["mempool-transactions"] as
-        | { added?: Array<{ txid: string; vsize?: number; weight?: number; fee?: number; rate?: number }>; removed?: unknown[]; mined?: unknown[]; replaced?: unknown[] }
+        | { added?: Array<{ txid: string; vsize?: number; weight?: number; fee?: number; rate?: number; value?: number; vout?: Array<{ value?: number }> }>; removed?: unknown[]; mined?: unknown[]; replaced?: unknown[] }
         | undefined;
       if (mt) {
         if (Array.isArray(mt.added))
           for (const t of mt.added) {
             const vsize = t.vsize ?? (t.weight ? t.weight / 4 : 0);
-            if (Number.isFinite(vsize) && vsize > 0)
-              map.set(t.txid, { vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / vsize) });
+            if (Number.isFinite(vsize) && vsize > 0) {
+              const value =
+                t.value ??
+                (Array.isArray(t.vout) ? t.vout.reduce((a, o) => a + (o.value ?? 0), 0) : undefined);
+              map.set(t.txid, { vsize, rate: cleanRate(t.rate ?? (t.fee ?? 0) / vsize), value });
+            }
           }
         for (const key of ["removed", "mined", "replaced"] as const) {
           const arr = mt[key];
@@ -254,16 +260,26 @@ export default function Mempool() {
             {tiles.length > 0 ? (
               <svg viewBox={`0 0 ${G} ${G}`} className="h-full w-full">
                 {/* active transactions — drop in from the top */}
-                {tiles.map((t) => (
-                  <motion.rect
-                    key={t.txid}
-                    initial={{ opacity: 0, x: t.x + 0.1, y: -(t.s + 2), width: t.s - 0.2, height: t.s - 0.2 }}
-                    animate={{ opacity: 1, x: t.x + 0.1, y: t.y + 0.1, width: t.s - 0.2, height: t.s - 0.2 }}
-                    transition={{ duration: 0.45, ease: "easeOut" }}
-                    style={{ fill: feeToColor(t.fee) }}
-                  />
-                ))}
+                <g>
+                {tiles.map((t) => {
+                  const real = t.txid.length === 64;
+                  return (
+                    <motion.rect
+                      key={t.txid}
+                      initial={{ opacity: 0, x: t.x + 0.1, y: -(t.s + 2), width: t.s - 0.2, height: t.s - 0.2 }}
+                      animate={{ opacity: 1, x: t.x + 0.1, y: t.y + 0.1, width: t.s - 0.2, height: t.s - 0.2 }}
+                      transition={{ duration: 0.45, ease: "easeOut" }}
+                      style={{ fill: feeToColor(t.fee), cursor: real ? "pointer" : "default" }}
+                      onMouseEnter={(e) => setHover({ x: e.clientX, y: e.clientY, txid: t.txid, fee: t.fee })}
+                      onMouseMove={(e) => setHover((h) => (h && h.txid === t.txid ? { ...h, x: e.clientX, y: e.clientY } : h))}
+                      onMouseLeave={() => setHover((h) => (h && h.txid === t.txid ? null : h))}
+                      onClick={() => real && window.open(`https://mempool.space/tx/${t.txid}`, "_blank", "noopener")}
+                    />
+                  );
+                })}
+                </g>
                 {/* departing transactions — fade + shrink out when mined */}
+                <g>
                 {ghosts.map((g) => (
                   <motion.rect
                     key={g.key}
@@ -273,6 +289,7 @@ export default function Mempool() {
                     style={{ fill: feeToColor(g.fee), transformBox: "fill-box", transformOrigin: "center" }}
                   />
                 ))}
+                </g>
               </svg>
             ) : (
               <div className="flex h-full items-center justify-center font-mono text-xs text-faint">
@@ -323,7 +340,46 @@ export default function Mempool() {
           </p>
         </div>
       </div>
+
+      {hover && <TxTooltip hover={hover} info={txs.current.get(hover.txid)} />}
     </SlideShell>
+  );
+}
+
+function TxTooltip({ hover, info }: { hover: Hover; info?: Tx }) {
+  const real = hover.txid.length === 64;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 9999;
+  const left = Math.min(hover.x + 14, vw - 224);
+  return (
+    <div
+      className="pointer-events-none fixed z-50 w-[210px] border border-accent/60 bg-bg p-2.5 font-mono text-[0.7rem]"
+      style={{ left, top: hover.y + 14 }}
+    >
+      <div className="text-faint">{real ? "transaction" : "fee band"}</div>
+      {real && (
+        <div className="mt-0.5 break-all text-blue">
+          {hover.txid.slice(0, 16)}…{hover.txid.slice(-6)}
+        </div>
+      )}
+      <div className="mt-1.5 flex justify-between gap-3">
+        <span className="text-faint">fee</span>
+        <span style={{ color: feeToColor(hover.fee) }}>{Math.round(hover.fee)} sat/vB</span>
+      </div>
+      <div className="flex justify-between gap-3">
+        <span className="text-faint">size</span>
+        <span className="text-fg">{info ? Math.round(info.vsize).toLocaleString() : "—"} vB</span>
+      </div>
+      <div className="flex justify-between gap-3">
+        <span className="text-faint">value</span>
+        <span className="text-fg">
+          {info && info.value != null
+            ? (info.value / 1e8).toLocaleString(undefined, { maximumFractionDigits: 4 })
+            : "—"}{" "}
+          BTC
+        </span>
+      </div>
+      {real && <div className="mt-1.5 text-faint">click → mempool.space</div>}
+    </div>
   );
 }
 
