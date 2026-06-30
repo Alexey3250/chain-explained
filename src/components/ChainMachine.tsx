@@ -29,10 +29,11 @@ const MEM_X0 = 252;
 const MEM_Y0 = 78;
 const NODE_Y1 = 70;
 const MID = ASSEM_Y - BLOCK / 2; // the chain row (block top)
-const TOPB = MID - 38; // top miner block (green)
+const TOPB = MID - 38; // top miner block (magenta)
 const BOTB = MID + 38; // bottom miner block (blue)
 const ABX = ASSEM_X - BLOCK / 2; // assembly block x
 const VERIFY_X = 210; // centre stage where the winning block is checked before joining
+const MAGENTA = "#d6409f"; // top miner colour (green is reserved for fees / "ok" states)
 
 type Region = "chain" | "link" | "block" | "miner" | "mempool" | "nodes";
 
@@ -50,7 +51,7 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
   miner: {
     title: "the miners",
     term: "racing for the block",
-    body: "Two miners (green on top, blue below) each pack a block and guess hashes as fast as they can. Whoever finds a valid hash first wins — their block is added with their own colour outline, and the race restarts on top of it.",
+    body: "Two miners (magenta on top, blue below) each pack a block and guess hashes as fast as they can. Each picks the top-fee transactions, so their blocks are almost identical — just a few differ. Whoever finds a valid hash first wins; their block is added, and the loser's leftover transactions drop back into the mempool.",
   },
   block: {
     title: "a block",
@@ -79,7 +80,6 @@ type Tx = {
   fee: number;
   phase: "in" | "pool";
   slot: number;
-  sel: boolean; // selected for the current round — stays in the mempool until confirmed
   flash: number;
 };
 // a transaction copied toward one miner's block (preserves the tx colour): it
@@ -100,7 +100,7 @@ type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: 
 // a block header: ph = prev-block-hash swatch (fixed), nonce = the nonce swatch
 type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string; nonce: string };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
-type Status = { phase: "idle" | "gather" | "hash" | "found" | "verify"; winner: number }; // winner: -1 none, 0 green, 1 blue
+type Status = { phase: "idle" | "gather" | "hash" | "found" | "verify"; winner: number }; // winner: -1 none, 0 magenta, 1 blue
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const randFee = (intro: boolean) => Math.random() ** 2 * (intro ? 40 : 130) + 1;
@@ -177,8 +177,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     const accent = "#f7931a";
-    const green = "#43c98b";
-    const blue = "#5b9bd5";
+    const magenta = MAGENTA; // top miner
+    const blue = "#5b9bd5"; // bottom miner
+    const green = "#43c98b"; // reserved for "check passed" ticks
     const faint = "#5a6170";
 
     const memCols = Math.floor((CW - MEM_X0 - 2) / TX);
@@ -212,6 +213,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     // the winning block, after it leaves a miner and before it joins the chain:
     // it slides to centre stage where the nodes check its 3 parts.
     let verifying: Blk | null = null;
+    // the few transactions unique to each miner's block (the realistic diff) — the
+    // LOSER's set drops back into the mempool once the winner is decided.
+    let diffTop: number[] = [];
+    let diffBot: number[] = [];
 
     const nodes: Node[] = Array.from({ length: intro ? 3 : 4 }, () => ({
       x: rnd(MEM_X0 - 24, CW - 8),
@@ -225,13 +230,13 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     // seed history (alternating winner colours), each with its own header swatches
     for (let i = 0; i < (intro ? 4 : 7); i++) {
       const x = CHAIN_RIGHT - i * PITCH;
-      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : green, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: hsl(randHue(), 52, 50), nonce: hsl(randHue(), 60, 55) });
+      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: hsl(randHue(), 52, 50), nonce: hsl(randHue(), 60, 55) });
     }
     // seed a visible mempool pile
     const seedPool = Math.min(memTarget, intro ? 150 : 190);
     for (let i = 0; i < seedPool; i++) {
       const s = memSlot(i);
-      txs.push({ x: s.x, y: s.y, tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "pool", slot: i, sel: false, flash: 0 });
+      txs.push({ x: s.x, y: s.y, tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "pool", slot: i, flash: 0 });
     }
 
     let spawnAcc = 0;
@@ -246,19 +251,22 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const FOUND_MS = 850;
     const VERIFY_MS = intro ? 2100 : 1500; // nodes check the 3 parts in sequence (~700ms each)
 
-    const spawnTx = () => {
+    // add a transaction to the pool, flying in from (fromX, fromY) to a free slot
+    const addPoolTx = (fee: number, fromX: number, fromY: number) => {
       if (txs.length >= memTarget) return;
       const occ = new Set(txs.map((t) => t.slot));
       let i = 0;
       while (occ.has(i) && i < memTarget) i++;
       const s = memSlot(i);
-      txs.push({ x: CW + rnd(2, 26), y: rnd(MEM_Y0, CH - 6), tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "in", slot: i, sel: false, flash: 0 });
+      txs.push({ x: fromX, y: fromY, tx0: s.x, ty0: s.y, fee, phase: "in", slot: i, flash: 0 });
     };
+    const spawnTx = () => addPoolTx(randFee(intro), CW + rnd(2, 26), rnd(MEM_Y0, CH - 6));
 
     const vary = (f: number) => Math.max(1, f * (1 + (Math.random() - 0.5) * 0.16)); // very similar, tiny bit different
+    const DIFF = 4; // how many transactions differ between the two miners' blocks
     const startGather = () => {
-      const pool = txs.filter((t) => t.phase === "pool" && !t.sel);
-      if (pool.length < TOTAL) return false;
+      const pool = txs.filter((t) => t.phase === "pool");
+      if (pool.length < TOTAL + DIFF) return false;
       pool.sort((a, b) => b.fee - a.fee);
       formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
@@ -266,23 +274,30 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       stackBot.fill(0);
       roundPHHue = randHue(); // new chain tip → new prev-hash for both miners
       copies.length = 0;
-      // a shuffled bag of columns (each used BN times) → transactions rain into
-      // random columns and pile up, instead of filling in a rigid raster
+      // both miners grab the top-fee transactions, so they mostly agree — but at
+      // the margin each keeps a few the other doesn't (a realistic, almost-same diff)
+      const shared = pool.slice(0, TOTAL - DIFF); // in both blocks
+      const uniqTop = pool.slice(TOTAL - DIFF, TOTAL); // only the top miner's block
+      const uniqBot = pool.slice(TOTAL, TOTAL + DIFF); // only the bottom miner's block
+      diffTop = uniqTop.map((t) => t.fee);
+      diffBot = uniqBot.map((t) => t.fee);
+      // ONE shuffled column bag, shared by both blocks → identical layout, so the
+      // blocks look almost the same (only the diff cells hold different txs)
       const bag: number[] = [];
       for (let col = 0; col < BN; col++) for (let r = 0; r < BN; r++) bag.push(col);
       for (let i = bag.length - 1; i > 0; i--) {
         const j = (Math.random() * (i + 1)) | 0;
         [bag[i], bag[j]] = [bag[j], bag[i]];
       }
-      // both miners see the SAME transactions — copy each one to both blocks
-      pool.slice(0, TOTAL).forEach((t, k) => {
-        t.sel = true;
-        const col = bag[k];
-        const colX = ABX + 2 + col * TX;
-        const delay = k * STAGGER;
-        copies.push({ x: t.x, y: t.y, cx: colX, fee: vary(t.fee), mb: 0, col, delay, phase: "wait", vy: 0 });
-        copies.push({ x: t.x, y: t.y, cx: colX, fee: vary(t.fee), mb: 1, col, delay, phase: "wait", vy: 0 });
-      });
+      const topTxs = shared.concat(uniqTop);
+      const botTxs = shared.concat(uniqBot);
+      const launch = (t: Tx, mb: 0 | 1, k: number) =>
+        copies.push({ x: t.x, y: t.y, cx: ABX + 2 + bag[k] * TX, fee: vary(t.fee), mb, col: bag[k], delay: k * STAGGER, phase: "wait", vy: 0 });
+      topTxs.forEach((t, k) => launch(t, 0, k));
+      botTxs.forEach((t, k) => launch(t, 1, k));
+      // the picked transactions actually LEAVE the mempool (they're flying copies now)
+      const taken = new Set<Tx>([...shared, ...uniqTop, ...uniqBot]);
+      for (let i = txs.length - 1; i >= 0; i--) if (taken.has(txs[i])) txs.splice(i, 1);
       return true;
     };
 
@@ -301,13 +316,20 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     // promote the winning miner block to centre stage for verification
     const startVerify = () => {
       const wf = st.winner === 0 ? formingTop : formingBot;
-      const color = st.winner === 0 ? green : blue;
+      const color = st.winner === 0 ? magenta : blue;
       const startY = st.winner === 0 ? TOPB : BOTB;
       const nh = st.winner === 0 ? nonceTopHue : nonceBotHue; // the winning nonce, frozen
       verifying = { x: ABX, tx: VERIFY_X, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee), ph: hsl(roundPHHue, 52, 50), nonce: hsl(nh, 60, 55) };
       formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
       copies.length = 0;
+      // the loser's block is abandoned — its unique transactions weren't confirmed,
+      // so they fall back into the mempool from the losing block
+      const lost = st.winner === 0 ? diffBot : diffTop;
+      const loserY = (st.winner === 0 ? BOTB : TOPB) + BLOCK / 2;
+      lost.forEach((fee) => addPoolTx(fee, ABX + BLOCK / 2, loserY));
+      diffTop = [];
+      diffBot = [];
     };
 
     // checks passed → the verified block joins the chain tip
@@ -319,8 +341,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         verifying = null;
       }
       for (let i = 1; i < blocks.length; i++) blocks[i].tx = CHAIN_RIGHT - i * PITCH;
-      // only the confirmed transactions leave the mempool; the rest stay
-      for (let i = txs.length - 1; i >= 0; i--) if (txs[i].sel) txs.splice(i, 1);
+      // the confirmed transactions already left the pool when they were picked
       setMinted((m) => m + 1);
     };
 
@@ -349,7 +370,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           st.phase = "found";
           st.winner = Math.random() < 0.5 ? 0 : 1; // first to a valid hash
           const wy = st.winner === 0 ? TOPB : BOTB;
-          burstSparks(ABX + BLOCK / 2, wy + BLOCK / 2, st.winner === 0 ? green : blue); // celebrate the win
+          burstSparks(ABX + BLOCK / 2, wy + BLOCK / 2, st.winner === 0 ? magenta : blue); // celebrate the win
           phaseT = 0;
         }
       } else if (st.phase === "found") {
@@ -556,17 +577,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       // which of the 3 parts is under inspection this frame (-1 when not verifying)
       const checkStage = st.phase === "verify" ? Math.min(2, Math.floor(phaseT / (VERIFY_MS / 3))) : -1;
 
-      // mempool pixels. skip anything still off-screen (e.g. spawning in past
-      // the right edge). transactions the miners have picked for this block stay
-      // in the pool but get banded in the workers' colours — green (top miner)
-      // on top, blue (bottom miner) below — to show they've been claimed.
+      // mempool pixels. skip anything still off-screen (e.g. spawning in / returning)
       for (const t of txs) {
         if (t.x >= CW || t.x <= -TX || t.y >= CH || t.y <= -TX) continue;
         rect(t.x, t.y, PX, PX, t.flash > 0 ? "#eef3ee" : feeToColor(t.fee));
-        if (t.sel) {
-          rect(t.x, t.y, PX, 1, green); // claimed by the green (top) miner
-          rect(t.x, t.y + PX - 1, PX, 1, blue); // claimed by the blue (bottom) miner
-        }
       }
 
       // node robots + scan beams (aim at the block under check while verifying)
@@ -583,11 +597,11 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         rect(n.x + 1, n.y + 1, 1, 1, accent);
       }
 
-      // two miners racing — top (green), bottom (blue) — always on screen
+      // two miners racing — top (magenta), bottom (blue) — always on screen
       const hashing = st.phase === "hash";
-      // the miners keep their colours at all times — green on top, blue below —
+      // the miners keep their colours at all times — magenta on top, blue below —
       // so they never grey out or disappear between rounds
-      const topC = green;
+      const topC = magenta;
       const botC = blue;
       blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
       frame(ABX, TOPB, BLOCK, topC);
@@ -602,9 +616,16 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       rect(ABX - 7, BOTB + BLOCK / 2 - 2 + tick, 3, 3, botC);
       rect(ABX - 9, BOTB + BLOCK / 2 + 2, 6, 1, botC);
 
-      // transactions falling into the blocks, drawn on top so they drop INTO the
-      // grid (mempool colour preserved for continuity)
+      // transactions being taken to the blocks, drawn on top (mempool colour kept).
+      // while still over the pool, each is tagged in the claiming worker's colour —
+      // magenta band (top miner) and/or blue band (bottom miner). a shared tx shows
+      // both; a tx unique to one miner shows only that one.
       for (const c of copies) rect(c.x, c.y, PX, PX, feeToColor(c.fee));
+      for (const c of copies) {
+        if (c.phase === "fall") continue; // already a block pixel
+        if (c.mb === 0) rect(c.x, c.y, PX, 1, magenta); // top miner claims it
+        else rect(c.x, c.y + PX - 1, PX, 1, blue); // bottom miner claims it
+      }
 
       // chain blocks (winner's colour outline) + 1px links
       for (let i = blocks.length - 1; i >= 0; i--) {
@@ -770,7 +791,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
             {status.phase === "hash" && <span className="text-accent">⛏ two miners racing for the block…</span>}
             {status.phase === "found" &&
               (status.winner === 0 ? (
-                <span className="text-green">✓ green miner found a valid hash</span>
+                <span style={{ color: MAGENTA }}>✓ magenta miner found a valid hash</span>
               ) : (
                 <span className="text-blue">✓ blue miner found a valid hash</span>
               ))}
