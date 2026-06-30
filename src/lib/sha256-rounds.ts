@@ -132,6 +132,40 @@ export function shaTrace(msg: string): ShaTrace {
   };
 }
 
+/** Fast synchronous SHA-256 of a short string (≤55 bytes), as 64 hex chars.
+    Used for the live proof-of-work mining loop. */
+export function sha256Short(msg: string): string {
+  const { block } = padBlock(msg);
+  const W = new Array<number>(64);
+  for (let t = 0; t < 16; t++) {
+    W[t] =
+      ((block[t * 4] << 24) |
+        (block[t * 4 + 1] << 16) |
+        (block[t * 4 + 2] << 8) |
+        block[t * 4 + 3]) >>>
+      0;
+  }
+  for (let t = 16; t < 64; t++) {
+    W[t] = add(smallSig1(W[t - 2]), W[t - 7], smallSig0(W[t - 15]), W[t - 16]);
+  }
+  let [a, b, c, d, e, f, g, h] = IV;
+  for (let t = 0; t < 64; t++) {
+    const T1 = add(h, bigSig1(e), ch(e, f, g), K[t], W[t]);
+    const T2 = add(bigSig0(a), maj(a, b, c));
+    h = g;
+    g = f;
+    f = e;
+    e = add(d, T1);
+    d = c;
+    c = b;
+    b = a;
+    a = add(T1, T2);
+  }
+  return [a, b, c, d, e, f, g, h]
+    .map((v, i) => add(v, IV[i]).toString(16).padStart(8, "0"))
+    .join("");
+}
+
 /** Expand a 32-bit word into 32 bits, most-significant first. */
 export function toBits(x: number): number[] {
   const out = new Array<number>(32);
