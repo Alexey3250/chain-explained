@@ -95,6 +95,8 @@ type Copy = {
   phase: "wait" | "fly" | "fall";
   vy: number; // fall velocity
 };
+// a celebratory pixel spark, burst when a miner wins the block
+type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string };
 // a block header: ph = prev-block-hash swatch (fixed), nonce = the nonce swatch
 type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string; nonce: string };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
@@ -192,6 +194,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     const txs: Tx[] = [];
     const copies: Copy[] = [];
+    const sparks: Spark[] = [];
     const blocks: Blk[] = [];
     const formingTop = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
     const formingBot = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
@@ -283,6 +286,18 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       return true;
     };
 
+    // burst a shower of pixel sparks out of a point — fired when a miner wins
+    const burstSparks = (cx: number, cy: number, color: string) => {
+      for (let i = 0; i < 44; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = rnd(30, 150);
+        const life = rnd(700, 1600);
+        const r = Math.random();
+        const c = r < 0.4 ? "#eef3ee" : r < 0.7 ? color : accent; // sparkle, winner colour, accent
+        sparks.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - rnd(10, 55), life, max: life, color: c });
+      }
+    };
+
     // promote the winning miner block to centre stage for verification
     const startVerify = () => {
       const wf = st.winner === 0 ? formingTop : formingBot;
@@ -333,6 +348,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         if (phaseT >= HASH_MS) {
           st.phase = "found";
           st.winner = Math.random() < 0.5 ? 0 : 1; // first to a valid hash
+          const wy = st.winner === 0 ? TOPB : BOTB;
+          burstSparks(ABX + BLOCK / 2, wy + BLOCK / 2, st.winner === 0 ? green : blue); // celebrate the win
           phaseT = 0;
         }
       } else if (st.phase === "found") {
@@ -415,6 +432,16 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
             copies.splice(i, 1); // landed → it becomes the block pixel
           }
         }
+      }
+
+      // winner sparks — fly out and fall, fading as they go
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.vy += 90 * k; // gentle gravity
+        s.x += s.vx * k;
+        s.y += s.vy * k;
+        s.life -= dt;
+        if (s.life <= 0) sparks.splice(i, 1);
       }
 
       // nodes — roam the top strip, but swarm the block while it's being checked
@@ -605,6 +632,15 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           if (s < checkStage) box(bx, by, bw, bh, green); // passed
           else if (s === checkStage) box(bx, by, bw, bh, pulse ? "#eef3ee" : accent); // checking now
         }
+      }
+
+      // winner sparks on top, fading out over their life
+      if (sparks.length) {
+        for (const s of sparks) {
+          ctx.globalAlpha = Math.max(0, Math.min(1, s.life / s.max));
+          rect(s.x, s.y, 1, 1, s.color);
+        }
+        ctx.globalAlpha = 1;
       }
 
       // hover highlight (integer-aligned outline)
