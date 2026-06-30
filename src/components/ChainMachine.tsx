@@ -27,6 +27,10 @@ const CHAIN_RIGHT = 168;
 const MEM_X0 = 252;
 const MEM_Y0 = 78;
 const NODE_Y1 = 70;
+const MID = ASSEM_Y - BLOCK / 2; // the chain row (block top)
+const TOPB = MID - 38; // top miner block (green)
+const BOTB = MID + 38; // bottom miner block (blue)
+const ABX = ASSEM_X - BLOCK / 2; // assembly block x
 
 type Region = "chain" | "link" | "block" | "miner" | "mempool" | "nodes";
 
@@ -42,9 +46,9 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
     body: "Thousands of independent computers relay each transaction and re-check every rule themselves. No one is in charge; invalid transactions are simply ignored.",
   },
   miner: {
-    title: "the miner",
-    term: "proof-of-work",
-    body: "A miner packs transactions into a block, then guesses hashes billions of times until one starts with enough zeros. That costly search is what earns the right to add the block.",
+    title: "the miners",
+    term: "racing for the block",
+    body: "Two miners (green on top, blue below) each pack a block and guess hashes as fast as they can. Whoever finds a valid hash first wins — their block is added with their own colour outline, and the race restarts on top of it.",
   },
   block: {
     title: "a block",
@@ -63,7 +67,7 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
   },
 };
 
-const REGION_ORDER: Region[] = ["mempool", "nodes", "miner", "block", "chain", "link"];
+const REGION_ORDER: Region[] = ["mempool", "nodes", "chain", "link", "block", "miner"];
 
 type Tx = {
   x: number;
@@ -73,18 +77,15 @@ type Tx = {
   fee: number;
   phase: "in" | "pool" | "toblock";
   slot: number;
+  mb: 0 | 1; // which miner block (0 = top/green, 1 = bottom/blue)
   flash: number;
 };
-type Blk = { x: number; tx: number; pixels: number[] };
+type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[] };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
-type Status = { phase: "idle" | "gather" | "hash" | "found"; attempts: number; hash: string; n: number };
+type Status = { phase: "idle" | "gather" | "hash" | "found"; winner: number }; // winner: -1 none, 0 green, 1 blue
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const randFee = (intro: boolean) => Math.random() ** 2 * (intro ? 40 : 130) + 1;
-const hex = (n: number) =>
-  Array.from({ length: n }, () => "0123456789abcdef"[(Math.random() * 16) | 0]).join("");
-const fmtHashes = (a: number) =>
-  a >= 1e9 ? `${(a / 1e9).toFixed(2)} billion` : a >= 1e6 ? `${(a / 1e6).toFixed(1)} million` : `${Math.round(a)}`;
 
 export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const intro = mode === "intro";
@@ -92,13 +93,13 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const [tour, setTour] = useState<Region | null>(intro ? null : "mempool");
   const [minted, setMinted] = useState(intro ? 0 : 11);
   const [reduced, setReduced] = useState(false);
-  const [status, setStatus] = useState<Status>({ phase: "idle", attempts: 0, hash: "00000000", n: intro ? 1 : 12 });
+  const [status, setStatus] = useState<Status>({ phase: "idle", winner: -1 });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const visibleRef = useRef(true);
   const hoveredRef = useRef<Region | null>(null);
-  const statusRef = useRef<Status>({ phase: "idle", attempts: 0, hash: "00000000", n: intro ? 1 : 12 });
+  const statusRef = useRef<Status>({ phase: "idle", winner: -1 });
   useEffect(() => {
     hoveredRef.current = hovered;
   }, [hovered]);
@@ -145,6 +146,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
+    const accent = "#f7931a";
+    const green = "#43c98b";
+    const blue = "#5b9bd5";
+    const faint = "#5a6170";
 
     const memCols = Math.floor((CW - MEM_X0 - 2) / TX);
     const memRows = Math.floor((CH - MEM_Y0 - 2) / TX);
@@ -156,7 +161,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     const txs: Tx[] = [];
     const blocks: Blk[] = [];
-    const forming: { fee: number; filled: boolean }[] = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
+    const formingTop = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
+    const formingBot = Array.from({ length: TOTAL }, () => ({ fee: 0, filled: false }));
 
     const nodes: Node[] = Array.from({ length: intro ? 3 : 4 }, () => ({
       x: rnd(MEM_X0 - 24, CW - 8),
@@ -167,15 +173,16 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       target: -1,
     }));
 
-    // seed history
+    // seed history (alternating winner colours)
     for (let i = 0; i < (intro ? 4 : 7); i++) {
-      blocks.push({ x: CHAIN_RIGHT - i * PITCH, tx: CHAIN_RIGHT - i * PITCH, pixels: Array.from({ length: TOTAL }, () => randFee(intro)) });
+      const x = CHAIN_RIGHT - i * PITCH;
+      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : green, pixels: Array.from({ length: TOTAL }, () => randFee(intro)) });
     }
     // seed a visible mempool pile
     const seedPool = Math.min(memCap, intro ? 120 : 220);
     for (let i = 0; i < seedPool; i++) {
       const s = memSlot(i);
-      txs.push({ x: s.x, y: s.y, tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "pool", slot: i, flash: 0 });
+      txs.push({ x: s.x, y: s.y, tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "pool", slot: i, mb: 0, flash: 0 });
     }
 
     let spawnAcc = 0;
@@ -194,25 +201,32 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       let i = 0;
       while (occ.has(i) && i < memCap) i++;
       const s = memSlot(i);
-      txs.push({ x: CW + rnd(2, 26), y: rnd(MEM_Y0, CH - 6), tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "in", slot: i, flash: 0 });
+      txs.push({ x: CW + rnd(2, 26), y: rnd(MEM_Y0, CH - 6), tx0: s.x, ty0: s.y, fee: randFee(intro), phase: "in", slot: i, mb: 0, flash: 0 });
     };
 
     const startGather = () => {
       const pool = txs.filter((t) => t.phase === "pool");
-      if (pool.length < TOTAL) return false;
+      if (pool.length < 2 * TOTAL) return false;
       pool.sort((a, b) => b.fee - a.fee);
-      forming.forEach((f) => ((f.fee = 0), (f.filled = false)));
-      pool.slice(0, TOTAL).forEach((t, k) => {
+      formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
+      formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
+      pool.slice(0, 2 * TOTAL).forEach((t, idx) => {
+        const mb = (idx < TOTAL ? 0 : 1) as 0 | 1;
+        const k = idx % TOTAL;
         t.phase = "toblock";
+        t.mb = mb;
         t.slot = k;
-        t.tx0 = ASSEM_X - BLOCK / 2 + 2 + (k % BN) * TX;
-        t.ty0 = ASSEM_Y - BLOCK / 2 + 2 + Math.floor(k / BN) * TX;
+        t.tx0 = ABX + 2 + (k % BN) * TX;
+        t.ty0 = (mb === 0 ? TOPB : BOTB) + 2 + Math.floor(k / BN) * TX;
       });
       return true;
     };
 
     const seal = () => {
-      blocks.unshift({ x: ASSEM_X - BLOCK / 2, tx: CHAIN_RIGHT, pixels: forming.map((f) => f.fee) });
+      const wf = st.winner === 0 ? formingTop : formingBot;
+      const color = st.winner === 0 ? green : blue;
+      const startY = st.winner === 0 ? TOPB : BOTB;
+      blocks.unshift({ x: ABX, tx: CHAIN_RIGHT, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee) });
       for (let i = 1; i < blocks.length; i++) blocks[i].tx = CHAIN_RIGHT - i * PITCH;
       for (let i = txs.length - 1; i >= 0; i--) if (txs[i].phase === "toblock") txs.splice(i, 1);
       setMinted((m) => m + 1);
@@ -227,31 +241,28 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       phaseT += dt;
       const k = Math.min(1, dt / 1000);
 
-      // mining phase machine
+      // mining phase machine — two miners race
       if (st.phase === "idle") {
         if (phaseT >= IDLE_MS && startGather()) {
           st.phase = "gather";
           phaseT = 0;
         }
       } else if (st.phase === "gather") {
-        if (forming.every((f) => f.filled)) {
+        if (formingTop.every((f) => f.filled) && formingBot.every((f) => f.filled)) {
           st.phase = "hash";
-          st.attempts = 0;
           phaseT = 0;
         }
       } else if (st.phase === "hash") {
-        st.attempts += rnd(1.4e7, 5e7) * (dt / 16);
-        st.hash = hex(8);
         if (phaseT >= HASH_MS) {
           st.phase = "found";
-          st.hash = "0000" + hex(4);
-          st.n = minted + 1;
+          st.winner = Math.random() < 0.5 ? 0 : 1; // first to a valid hash
           phaseT = 0;
         }
       } else if (st.phase === "found") {
         if (phaseT >= FOUND_MS) {
           seal();
           st.phase = "idle";
+          st.winner = -1;
           phaseT = 0;
         }
       }
@@ -270,8 +281,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           t.x += (t.tx0 - t.x) * Math.min(1, k * 4);
           t.y += (t.ty0 - t.y) * Math.min(1, k * 4);
           if (Math.abs(t.x - t.tx0) < 0.5 && Math.abs(t.y - t.ty0) < 0.5) {
-            forming[t.slot].fee = t.fee;
-            forming[t.slot].filled = true;
+            const fb = t.mb === 0 ? formingTop : formingBot;
+            fb[t.slot].fee = t.fee;
+            fb[t.slot].filled = true;
           }
         }
         if (t.flash > 0) t.flash -= dt;
@@ -297,10 +309,12 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
       }
 
-      // chain shift + cull off-screen
+      // chain glide (smooth, in x and y) + cull off-screen
       for (let i = blocks.length - 1; i >= 0; i--) {
         const b = blocks[i];
-        b.x += (b.tx - b.x) * Math.min(1, k * 2);
+        const e = Math.min(1, k * 2.4);
+        b.x += (b.tx - b.x) * e;
+        b.y += (b.ty - b.y) * e;
         if (b.x + BLOCK < -2) blocks.splice(i, 1);
       }
     };
@@ -349,11 +363,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       }
     };
 
-    const accent = "#f7931a";
-    const green = "#43c98b";
-    const blue = "#5b9bd5";
-    const faint = "#5a6170";
-
     const draw = () => {
       ctx.clearRect(0, 0, CW, CH);
       const hov = hoveredRef.current;
@@ -380,42 +389,35 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         if (t.phase === "toblock") rect(t.x, t.y, PX, PX, feeToColor(t.fee));
       }
 
-      // forming block
+      // two miners racing — top (green), bottom (blue)
       if (st.phase === "gather" || st.phase === "hash" || st.phase === "found") {
-        const bx = ASSEM_X - BLOCK / 2;
-        const by = ASSEM_Y - BLOCK / 2;
-        blockPixels(bx, by, forming.map((f) => f.fee), (i) => forming[i].filled);
-        const pulse = st.phase === "hash" ? (R(phaseT / 90) % 2 === 0 ? accent : faint) : st.phase === "found" ? green : accent;
-        frame(bx, by, BLOCK, pulse);
+        const hashing = st.phase === "hash";
+        const won = st.phase === "found";
+        const topC = won ? (st.winner === 0 ? green : "#26352e") : hashing ? (R(phaseT / 90) % 2 === 0 ? green : faint) : green;
+        const botC = won ? (st.winner === 1 ? blue : "#223038") : hashing ? (R(phaseT / 90 + 1) % 2 === 0 ? blue : faint) : blue;
+        blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
+        frame(ABX, TOPB, BLOCK, topC);
+        blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
+        frame(ABX, BOTB, BLOCK, botC);
+        // miner glyphs (pickaxe), animated while hashing
+        const tick = hashing && R(phaseT / 70) % 2 ? 1 : 0;
+        rect(ABX - 7, TOPB + BLOCK / 2 - 2 + tick, 3, 3, topC);
+        rect(ABX - 9, TOPB + BLOCK / 2 + 2, 6, 1, topC);
+        rect(ABX - 7, BOTB + BLOCK / 2 - 2 + tick, 3, 3, botC);
+        rect(ABX - 9, BOTB + BLOCK / 2 + 2, 6, 1, botC);
       }
 
-      // miner glyph (pickaxe-ish), animated while hashing
-      const my = ASSEM_Y + BLOCK / 2 + 6;
-      const mc = st.phase === "hash" ? accent : st.phase === "found" ? green : faint;
-      rect(ASSEM_X - 1, my + (st.phase === "hash" && R(phaseT / 70) % 2 ? 1 : 0), 2, 3, mc);
-      rect(ASSEM_X - 4, my + 4, 9, 1, mc);
-
-      // chain blocks + links
+      // chain blocks (winner's colour outline) + 1px links
       for (let i = blocks.length - 1; i >= 0; i--) {
         const b = blocks[i];
-        const by = ASSEM_Y - BLOCK / 2;
-        blockPixels(b.x, by, b.pixels);
-        frame(b.x, by, BLOCK, faint);
+        blockPixels(b.x, b.y, b.pixels);
+        frame(b.x, b.y, BLOCK, b.color);
         const right = blocks[i - 1];
-        const rightX = right ? right.x : st.phase !== "idle" ? ASSEM_X - BLOCK / 2 : -999;
+        const rightX = right ? right.x : -999;
         if (rightX > b.x) {
           const lx = b.x + BLOCK;
           const lw = rightX - lx;
-          if (lw > 0 && lw <= LINK + 2) {
-            // a small chain-link: hollow box + bar bridging the two blocks
-            const ly = ASSEM_Y - 4;
-            const lh = 8;
-            rect(lx, ly, lw, 1, accent);
-            rect(lx, ly + lh - 1, lw, 1, accent);
-            rect(lx, ly, 1, lh, accent);
-            rect(lx + lw - 1, ly, 1, lh, accent);
-            rect(lx, ASSEM_Y - 1, lw, 2, accent);
-          }
+          if (lw > 0 && lw <= LINK + 2) rect(lx, MID + Math.floor(BLOCK / 2) - 1, lw, 1, accent); // 1px chain link
         }
       }
 
@@ -453,7 +455,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [reduced, intro, minted]);
+  }, [reduced, intro]);
 
   const eff: Region | null = hovered ?? (intro ? null : tour);
   const info = eff ? MAP[eff] : null;
@@ -523,20 +525,19 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
               blocks mined · {minted.toLocaleString()}
             </span>
           )}
-          {/* mining proof-of-work readout, centred over the assembly */}
+          {/* two-miner race readout, centred over the assembly */}
           <span
             className="absolute -translate-x-1/2 whitespace-nowrap text-center"
-            style={{ left: `${(ASSEM_X / CW) * 100}%`, top: "22%" }}
+            style={{ left: `${(ASSEM_X / CW) * 100}%`, top: "2%" }}
           >
-            {status.phase === "hash" && (
-              <span className="text-accent">
-                ⛏ mining · nonce 0x{status.hash} · {fmtHashes(status.attempts)} hashes
-              </span>
-            )}
-            {status.phase === "found" && (
-              <span className="text-green">✓ block #{status.n} sealed · hash {status.hash}…</span>
-            )}
-            {status.phase === "gather" && <span className="text-muted">⛏ packing transactions…</span>}
+            {status.phase === "hash" && <span className="text-accent">⛏ two miners racing for the block…</span>}
+            {status.phase === "found" &&
+              (status.winner === 0 ? (
+                <span className="text-green">✓ green miner found it — block added</span>
+              ) : (
+                <span className="text-blue">✓ blue miner found it — block added</span>
+              ))}
+            {status.phase === "gather" && <span className="text-muted">packing transactions…</span>}
           </span>
         </div>
       </div>
@@ -562,13 +563,13 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 function zone(r: Region): { x: number; y: number; w: number; h: number } {
   switch (r) {
     case "chain":
-      return { x: 0, y: ASSEM_Y - BLOCK / 2 - 6, w: CHAIN_RIGHT + BLOCK, h: BLOCK + 12 };
+      return { x: 0, y: MID - 6, w: CHAIN_RIGHT - LINK, h: BLOCK + 12 };
     case "link":
-      return { x: CHAIN_RIGHT + BLOCK - 2, y: ASSEM_Y - 8, w: PITCH, h: 16 };
+      return { x: CHAIN_RIGHT - LINK - 2, y: MID + BLOCK / 2 - 7, w: LINK + 6, h: 14 };
     case "block":
-      return { x: ASSEM_X - BLOCK / 2 - 3, y: ASSEM_Y - BLOCK / 2 - 3, w: BLOCK + 6, h: BLOCK + 6 };
+      return { x: ABX - 3, y: TOPB - 3, w: BLOCK + 6, h: BOTB + BLOCK - TOPB + 6 };
     case "miner":
-      return { x: ASSEM_X - 12, y: ASSEM_Y + BLOCK / 2 + 4, w: 24, h: 18 };
+      return { x: ABX - 12, y: TOPB - 2, w: 12, h: BOTB + BLOCK - TOPB + 4 };
     case "mempool":
       return { x: MEM_X0 - 6, y: MEM_Y0 - 2, w: CW - MEM_X0 + 6, h: CH - MEM_Y0 };
     case "nodes":
