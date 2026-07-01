@@ -100,7 +100,7 @@ type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: 
 // a block header: ph = prev-block-hash barcode (fixed), nonce = the nonce barcode.
 // each is a little strip of colour bars, standing in for a hash's many hex digits.
 type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string[]; nonce: string[] };
-type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
+type Node = { x: number; y: number; vx: number; vy: number; t: number; targets: number[] };
 type Status = { phase: "idle" | "gather" | "hash" | "found" | "verify"; winner: number }; // winner: -1 none, 0 magenta, 1 blue
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -108,8 +108,11 @@ const randFee = (intro: boolean) => Math.random() ** 2 * (intro ? 40 : 130) + 1;
 // header swatches stand in for the 256-bit header fields, shown as colour
 const hsl = (h: number, s: number, l: number) => `hsl(${Math.round(h)}, ${s}%, ${l}%)`;
 const randHue = () => Math.random() * 360;
-const HBARS = 6; // colour bars per hash field — a tiny "barcode" of a hash
+const HBARS = 6; // bars per hash field — a tiny "barcode" of a hash
+// colour barcode for the nonce (it scrambles), grey barcode for the prev-hash
+// (fixed) so the two header fields read as clearly different things
 const makeBars = () => Array.from({ length: HBARS }, () => hsl(randHue(), 55 + Math.random() * 25, 46 + Math.random() * 20));
+const makeGreyBars = () => Array.from({ length: HBARS }, () => hsl(0, 0, 34 + Math.random() * 48));
 
 export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const intro = mode === "intro";
@@ -209,7 +212,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     // header barcodes — prev-hash is shared by both miners (same chain tip) and
     // stays fixed for the round; each miner's nonce barcode scrambles while it hashes.
-    let roundPHbars = makeBars();
+    let roundPHbars = makeGreyBars();
     let nonceTopBars = makeBars();
     let nonceBotBars = makeBars();
     // the winning block, after it leaves a miner and before it joins the chain:
@@ -226,13 +229,13 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       vx: rnd(-11, 11),
       vy: rnd(-7, 7),
       t: rnd(0, 2),
-      target: -1,
+      targets: [],
     }));
 
     // seed history (alternating winner colours), each with its own header swatches
     for (let i = 0; i < (intro ? 4 : 7); i++) {
       const x = CHAIN_RIGHT - i * PITCH;
-      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: makeBars(), nonce: makeBars() });
+      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: makeGreyBars(), nonce: makeBars() });
     }
     // seed a visible mempool pile
     const seedPool = Math.min(memTarget, intro ? 150 : 190);
@@ -275,7 +278,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
       stackTop.fill(0);
       stackBot.fill(0);
-      roundPHbars = makeBars(); // new chain tip → new prev-hash barcode for both miners
+      roundPHbars = makeGreyBars(); // new chain tip → new prev-hash barcode for both miners
       copies.length = 0;
       // both miners grab the top-fee transactions, so they mostly agree — but at
       // the margin each keeps a few the other doesn't (a realistic, almost-same diff)
@@ -482,7 +485,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           const oy = verifying.y + BLOCK / 2 - 2 + Math.sin(ang) * 20;
           n.x += (ox - n.x) * Math.min(1, k * 4);
           n.y += (oy - n.y) * Math.min(1, k * 4);
-          n.target = -1;
+          n.targets = [];
           continue;
         }
         n.x += n.vx * k;
@@ -498,13 +501,16 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
         n.t -= dt / 1000;
         if (n.t <= 0) {
-          n.t = rnd(0.8, 2.2);
-          const pool = txs.filter((t) => t.phase === "pool");
-          if (pool.length) {
-            const tgt = pool[(Math.random() * pool.length) | 0];
-            tgt.flash = 360;
-            n.target = txs.indexOf(tgt);
-          } else n.target = -1;
+          n.t = rnd(0.7, 1.6);
+          // fan attention onto a few pool transactions at once
+          n.targets = [];
+          for (let j = 0; j < 3; j++) {
+            const pi = (Math.random() * txs.length) | 0;
+            if (txs[pi] && txs[pi].phase === "pool") {
+              txs[pi].flash = 300;
+              n.targets.push(pi);
+            }
+          }
         }
       }
 
@@ -653,15 +659,36 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
       }
 
-      // node robots + scan beams — drawn on top of the blocks so a checking node
-      // hovers in front of the winning block rather than slipping behind it
-      for (const n of nodes) {
-        if (verifying && checkStage >= 0) {
-          const [px, py] = partPt(verifying, checkStage);
-          pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
-        } else if (n.target >= 0 && txs[n.target] && txs[n.target].phase === "pool") {
-          pixLine(n.x + 2, n.y + 4, txs[n.target].x + 1, txs[n.target].y + 1, "rgba(91,155,213,0.7)");
+      // scan beams — drawn on top of the blocks so a checking node hovers in front
+      // of the winning block rather than slipping behind it.
+      if (verifying && checkStage >= 0) {
+        // verifying: every node fixes its attention on the part being checked
+        const [px, py] = partPt(verifying, checkStage);
+        for (const n of nodes) pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
+      } else {
+        // ambient: each node fans a few rays over pool transactions
+        for (const n of nodes)
+          for (const ti of n.targets) {
+            const t = txs[ti];
+            if (t && t.phase === "pool") pixLine(n.x + 2, n.y + 4, t.x + 1, t.y + 1, "rgba(91,155,213,0.5)");
+          }
+        // and every INCOMING transaction gets checked — a ray from the nearest node
+        for (const t of txs) {
+          if (t.phase !== "in" || t.x >= CW || t.x <= -TX) continue;
+          let bn = nodes[0];
+          let bd = Infinity;
+          for (const n of nodes) {
+            const d = (n.x - t.x) ** 2 + (n.y - t.y) ** 2;
+            if (d < bd) {
+              bd = d;
+              bn = n;
+            }
+          }
+          pixLine(bn.x + 2, bn.y + 4, t.x + 1, t.y + 1, "rgba(122,201,240,0.85)");
         }
+      }
+      // node bodies (on top of their own beams)
+      for (const n of nodes) {
         rect(n.x, n.y, 4, 4, blue);
         rect(n.x, n.y - 1, 1, 1, faint);
         rect(n.x + 3, n.y - 1, 1, 1, faint);
