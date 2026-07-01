@@ -70,7 +70,9 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
   },
 };
 
-const REGION_ORDER: Region[] = ["mempool", "nodes", "chain", "link", "block", "miner"];
+// order doubles as the outro tour sequence AND the hit-rect stacking order (later =
+// on top): broad areas first, then the chain/link so the tip reads as chain, not miner
+const REGION_ORDER: Region[] = ["mempool", "nodes", "miner", "block", "chain", "link"];
 
 type Tx = {
   x: number;
@@ -880,18 +882,25 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 }
 
 function zone(r: Region): { x: number; y: number; w: number; h: number } {
+  const SPLIT = NODE_Y1 + 6; // divide the right column: nodes above, mempool below
   switch (r) {
-    case "chain":
-      return { x: 0, y: MID - 6, w: CHAIN_RIGHT - LINK, h: BLOCK + 12 };
-    case "link":
-      return { x: CHAIN_RIGHT - LINK - 2, y: MID + BLOCK / 2 - 7, w: LINK + 6, h: 14 };
-    case "block":
-      return { x: ABX - 3, y: TOPB - 6, w: BLOCK + 6, h: BOTB + BLOCK - TOPB + 9 };
-    case "miner":
-      return { x: ABX - 12, y: TOPB - 2, w: 12, h: BOTB + BLOCK - TOPB + 4 };
-    case "mempool":
-      return { x: MEM_X0 - 6, y: MEM_Y0 - 2, w: CW - MEM_X0 + 6, h: CH - MEM_Y0 };
+    // top-right strip the node robots roam
     case "nodes":
-      return { x: MEM_X0 - 26, y: 0, w: CW - MEM_X0 + 26, h: NODE_Y1 + 4 };
+      return { x: MEM_X0 - 28, y: 0, w: CW - (MEM_X0 - 28), h: SPLIT };
+    // the whole transaction pool below the nodes
+    case "mempool":
+      return { x: MEM_X0 - 8, y: SPLIT, w: CW - (MEM_X0 - 8), h: CH - SPLIT };
+    // the pickaxes to the left of the two racing blocks
+    case "miner":
+      return { x: ABX - 20, y: TOPB - 4, w: 22, h: BOTB + BLOCK - TOPB + 8 };
+    // the two racing blocks (and the centre-stage block) + their headers
+    case "block":
+      return { x: ABX - 5, y: TOPB - 8, w: BLOCK + 8, h: BOTB + BLOCK - TOPB + 16 };
+    // the sealed chain along the middle row, including the tip and the block bleeding off-screen
+    case "chain":
+      return { x: 0, y: MID - 8, w: CHAIN_RIGHT + 22, h: BLOCK + 16 };
+    // the prev-hash link between the two rightmost chain blocks
+    case "link":
+      return { x: CHAIN_RIGHT - 16, y: MID + 2, w: 20, h: 22 };
   }
 }
