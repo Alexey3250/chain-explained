@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { feeToColor } from "@/lib/fee";
 
 /* =====================================================================
@@ -35,9 +35,14 @@ const ABX = ASSEM_X - BLOCK / 2; // assembly block x
 const VERIFY_X = 210; // centre stage where the winning block is checked before joining
 const MAGENTA = "#d6409f"; // top miner colour (green is reserved for fees / "ok" states)
 
+// broad regions (used for keyboard focus) + precise things you can hover
 type Region = "chain" | "link" | "block" | "miner" | "mempool" | "nodes";
+type InfoKey = Region | "tx" | "hashTx" | "hashPow";
+// a precise hit under the pointer: what it is (+ its fee for a tx) and its outline box.
+// `broad` marks an area fall-back (draw a soft outline instead of a tight one).
+type HoverHit = { kind: InfoKey; fee?: number; broad?: boolean; x: number; y: number; w: number; h: number };
 
-const MAP: Record<Region, { title: string; term: string; body: string }> = {
+const MAP: Record<InfoKey, { title: string; term: string; body: string }> = {
   mempool: {
     title: "the mempool",
     term: "unconfirmed transactions",
@@ -67,6 +72,21 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
     title: "the link",
     term: "prev-block-hash",
     body: "Each block stores the hash of the block before it. That cryptographic link is what makes it a chain — edit any old block and every link after it breaks.",
+  },
+  tx: {
+    title: "a transaction",
+    term: "one unconfirmed payment",
+    body: "A single payment, broadcast to the network and waiting to be picked. Its colour is its fee rate — warmer pays more and gets chosen sooner.",
+  },
+  hashTx: {
+    title: "the transactions hash",
+    term: "a fingerprint of the block's contents",
+    body: "One short hash summarising every transaction in the block. Change any transaction and this fingerprint changes completely — that's how tampering is caught. A plain hash, so no leading zeros.",
+  },
+  hashPow: {
+    title: "the block hash",
+    term: "the proof-of-work",
+    body: "The block's own hash. The miner keeps changing the nonce until this comes out starting with a run of zeros — the white bars. Finding one is the 'work'; verifying it is instant.",
   },
 };
 
@@ -121,7 +141,7 @@ const makeGreyBars = () => Array.from({ length: HBARS }, () => hsl(0, 0, 30 + Ma
 
 export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const intro = mode === "intro";
-  const [hovered, setHovered] = useState<Region | null>(null);
+  const [hovered, setHovered] = useState<{ kind: InfoKey; fee?: number } | null>(null);
   const [tour, setTour] = useState<Region | null>(intro ? null : "mempool");
   const [minted, setMinted] = useState(intro ? 0 : 11);
   const [reduced, setReduced] = useState(false);
@@ -130,11 +150,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const visibleRef = useRef(true);
-  const hoveredRef = useRef<Region | null>(null);
+  const mouseRef = useRef<{ x: number; y: number } | null>(null); // pointer, in logical coords
+  const hoverHitRef = useRef<HoverHit | null>(null); // precise element under the pointer (for the outline)
   const statusRef = useRef<Status>({ phase: "idle", winner: -1 });
-  useEffect(() => {
-    hoveredRef.current = hovered;
-  }, [hovered]);
 
   useEffect(() => {
     const m = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -608,7 +626,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     const draw = () => {
       ctx.clearRect(0, 0, CW * S, CH * S);
-      const hov = hoveredRef.current;
       // which of the 3 parts is under inspection this frame (-1 when not verifying)
       const checkStage = st.phase === "verify" ? Math.min(2, Math.floor(phaseT / (VERIFY_MS / 3))) : -1;
 
@@ -739,16 +756,71 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         ctx.globalAlpha = 1;
       }
 
-      // hover highlight (integer-aligned outline)
-      if (hov) {
-        const z = zone(hov);
-        rect(z.x, z.y, z.w, 1, accent);
-        rect(z.x, z.y + z.h - 1, z.w, 1, accent);
-        rect(z.x, z.y, 1, z.h, accent);
-        rect(z.x + z.w - 1, z.y, 1, z.h, accent);
+      // hover highlight — a crisp outline hugging the exact element under the pointer,
+      // or a soft dim outline for a broad area fall-back
+      const hh = hoverHitRef.current;
+      if (hh) {
+        if (hh.broad) {
+          ctx.globalAlpha = 0.28;
+          box(hh.x, hh.y, hh.w, hh.h, accent);
+          ctx.globalAlpha = 1;
+        } else {
+          box(hh.x, hh.y, hh.w, hh.h, R(phaseT / 120) % 2 === 0 ? accent : "#ffd08a"); // gentle game-y pulse
+        }
       }
     };
 
+    // precise, game-like hit-test: what specific thing is under the pointer right now
+    const hitTest = (mx: number, my: number): HoverHit | null => {
+      // 1. a node robot (small, sits on top)
+      for (const n of nodes) {
+        if (mx >= n.x - 2 && mx <= n.x + 6 && my >= n.y - 2 && my <= n.y + 6) return { kind: "nodes", x: n.x - 2, y: n.y - 2, w: 8, h: 8 };
+      }
+      // 2. a header hash bar on any block — left (transactions) vs right (mined)
+      const hashHit = (bx: number, by: number): HoverHit | null => {
+        if (my < by - 7 || my > by - 1) return null;
+        if (mx >= bx && mx <= bx + 13) return { kind: "hashTx", x: bx, y: by - 6, w: 13, h: 5 };
+        if (mx >= bx + 14 && mx <= bx + 27) return { kind: "hashPow", x: bx + 14, y: by - 6, w: 13, h: 5 };
+        return null;
+      };
+      let hh = hashHit(ABX, TOPB) || hashHit(ABX, BOTB) || (verifying ? hashHit(verifying.x, verifying.y) : null);
+      if (!hh) for (const b of blocks) if ((hh = hashHit(b.x, b.y))) break;
+      if (hh) return hh;
+      // 3. a pickaxe (the worker) to the left of each racing block
+      const pickHit = (cy: number): HoverHit | null =>
+        mx >= ABX - 17 && mx <= ABX - 1 && my >= cy - 13 && my <= cy + 11 ? { kind: "miner", x: ABX - 17, y: cy - 13, w: 16, h: 24 } : null;
+      const ph = pickHit(TOPB + BLOCK / 2) || pickHit(BOTB + BLOCK / 2);
+      if (ph) return ph;
+      // 4. a racing / centre-stage block
+      const inBlock = (bx: number, by: number) => mx >= bx && mx <= bx + BLOCK && my >= by && my <= by + BLOCK;
+      if (inBlock(ABX, TOPB)) return { kind: "block", x: ABX, y: TOPB, w: BLOCK, h: BLOCK };
+      if (inBlock(ABX, BOTB)) return { kind: "block", x: ABX, y: BOTB, w: BLOCK, h: BLOCK };
+      if (verifying && inBlock(verifying.x, verifying.y)) return { kind: "block", x: verifying.x, y: verifying.y, w: BLOCK, h: BLOCK };
+      // 5. a sealed chain block, or a link between two of them
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        if (inBlock(b.x, b.y)) return { kind: "chain", x: b.x, y: b.y, w: BLOCK, h: BLOCK };
+        const younger = blocks[i - 1];
+        if (younger) {
+          const lx0 = b.x + BLOCK;
+          if (younger.x > lx0 && mx >= lx0 - 1 && mx <= younger.x + 1 && Math.abs(my - (MID + BLOCK / 2)) <= 4)
+            return { kind: "link", x: lx0, y: MID + BLOCK / 2 - 3, w: younger.x - lx0, h: 6 };
+        }
+      }
+      // 6. an individual mempool transaction
+      for (const t of txs) {
+        if (t.x >= CW || t.x <= -TX) continue;
+        if (mx >= t.x - 0.5 && mx <= t.x + PX + 0.5 && my >= t.y - 0.5 && my <= t.y + PX + 0.5) return { kind: "tx", fee: t.fee, x: t.x - 1, y: t.y - 1, w: PX + 2, h: PX + 2 };
+      }
+      // 7. otherwise fall back to the surrounding area (a soft outline, not a hard box)
+      for (const r of ["mempool", "nodes", "chain"] as Region[]) {
+        const z = zone(r);
+        if (mx >= z.x && mx <= z.x + z.w && my >= z.y && my <= z.y + z.h) return { kind: r, broad: true, ...z };
+      }
+      return null;
+    };
+
+    let lastHoverSig = "";
     let raf = 0;
     let last = 0;
     let acc = 0;
@@ -771,18 +843,46 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       const dt = Math.min(60, acc);
       acc = Math.min(acc - FRAME, FRAME);
       step(dt);
+      // resolve what the pointer is over against the live positions, then draw
+      const m = mouseRef.current;
+      if (m) {
+        const hit = hitTest(m.x, m.y);
+        hoverHitRef.current = hit;
+        const sig = hit ? `${hit.kind}:${hit.fee != null ? Math.round(hit.fee) : ""}` : "";
+        if (sig !== lastHoverSig) {
+          lastHoverSig = sig;
+          setHovered(hit ? { kind: hit.kind, fee: hit.fee } : null);
+        }
+      } else {
+        hoverHitRef.current = null;
+        lastHoverSig = "";
+      }
       draw();
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, [reduced, intro]);
 
-  const eff: Region | null = hovered ?? (intro ? null : tour);
+  const eff: InfoKey | null = hovered?.kind ?? (intro ? null : tour);
   const info = eff ? MAP[eff] : null;
+
+  const onPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    mouseRef.current = { x: ((e.clientX - r.left) / r.width) * CW, y: ((e.clientY - r.top) / r.height) * CH };
+  };
 
   return (
     <div ref={wrapRef} className="w-full" data-no-swipe>
-      <div className="relative w-full overflow-hidden border border-border bg-bg" style={{ aspectRatio: `${CW} / ${CH}` }}>
+      <div
+        className="relative w-full cursor-crosshair overflow-hidden border border-border bg-bg"
+        style={{ aspectRatio: `${CW} / ${CH}` }}
+        onPointerMove={onPointer}
+        onPointerDown={onPointer}
+        onPointerLeave={() => {
+          mouseRef.current = null;
+          setHovered(null);
+        }}
+      >
         <canvas
           ref={canvasRef}
           width={CW * SCALE}
@@ -792,15 +892,16 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           aria-hidden
         />
 
+        {/* keyboard-only focus targets (mouse/touch use precise canvas hit-testing);
+            pointer-events none so they never block the pointer hover above */}
         <svg
           viewBox={`0 0 ${CW} ${CH}`}
-          className="absolute inset-0 h-full w-full"
+          className="pointer-events-none absolute inset-0 h-full w-full"
           preserveAspectRatio="none"
           role="img"
-          aria-label="The Bitcoin transaction lifecycle: transactions gather in the mempool, nodes validate them, a miner hashes a block, and it links onto the chain. Hover or focus a part to inspect it."
+          aria-label="The Bitcoin transaction lifecycle: transactions gather in the mempool, nodes validate them, a miner hashes a block, and it links onto the chain. Hover any part with the pointer, or Tab through the regions, to inspect it."
         >
           <g role="group" aria-label="Inspect the machine">
-            <rect x={0} y={0} width={CW} height={CH} fill="transparent" onClick={() => setHovered(null)} />
             {REGION_ORDER.map((r) => {
               const z = zone(r);
               return (
@@ -814,18 +915,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
                   tabIndex={0}
                   role="button"
                   aria-label={MAP[r].title}
-                  style={{ cursor: "pointer", outline: "none" }}
-                  onMouseEnter={() => setHovered(r)}
-                  onMouseLeave={() => setHovered(null)}
-                  onFocus={() => setHovered(r)}
+                  style={{ outline: "none" }}
+                  onFocus={() => setHovered({ kind: r })}
                   onBlur={() => setHovered(null)}
-                  onClick={() => setHovered(r)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setHovered(r);
-                    }
-                  }}
                 />
               );
             })}
@@ -867,12 +959,15 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         {info ? (
           <div>
             <div className="text-[0.7rem] tracking-wide text-accent">{`// ${info.title}`}</div>
-            <div className="mt-1 text-xs text-muted">{info.term}</div>
+            <div className="mt-1 text-xs text-muted">
+              {info.term}
+              {hovered?.kind === "tx" && hovered.fee != null && <span className="text-fg"> · ~{Math.round(hovered.fee)} sat/vB fee</span>}
+            </div>
             <p className="mt-1.5 text-xs leading-relaxed text-muted">{info.body}</p>
           </div>
         ) : (
           <div className="text-xs text-muted">
-            {`// inspect`} · tap or hover any part — mempool, nodes, miner, block, chain{" "}
+            {`// inspect`} · hover any part — a transaction, a hash, a worker, a node, the chain{" "}
             <span className="text-accent blink">█</span>
           </div>
         )}
