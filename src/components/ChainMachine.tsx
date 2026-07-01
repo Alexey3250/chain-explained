@@ -621,27 +621,27 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
       frame(ABX, BOTB, BLOCK, botC);
       header(ABX, BOTB, roundPHbars, nonceBotBars);
-      // miner pickaxe (the ⛏ icon, drawn in pixels) — a handle + curved head that
-      // swings up and chops down toward the block while hashing
-      const pick = (cy: number, color: string) => {
+      // miner pickaxe — the actual ⛏ glyph, rotated to swing up and chop down while
+      // hashing (pivots around the hand at its lower end)
+      {
         const s = hashing ? -Math.cos(((swingT % SWING_MS) / SWING_MS) * Math.PI * 2) : -0.6; // -1 raised … +1 chop
-        const phi = 0.2 + s * 0.7; // rotation about the hand
-        const cph = Math.cos(phi);
-        const sph = Math.sin(phi);
-        const px0 = ABX - 8; // hand pivot (lower-left)
-        const py0 = cy + 5;
-        const plot = (lx: number, ly: number) => rect(R(px0 + lx * cph - ly * sph), R(py0 + lx * sph + ly * cph), 1, 1, color);
-        plot(0, -2); // handle (up from the hand)
-        plot(0, -4);
-        plot(0, -6);
-        plot(-2, -6); // curved pick head with two points
-        plot(-1, -7);
-        plot(0, -8);
-        plot(1, -7);
-        plot(2, -6);
-      };
-      pick(TOPB + BLOCK / 2, topC);
-      pick(BOTB + BLOCK / 2, botC);
+        const phi = 0.15 + s * 0.7; // swing rotation
+        ctx.save();
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = `${10 * S}px system-ui, "Segoe UI Symbol", sans-serif`;
+        const drawPick = (cy: number, color: string) => {
+          ctx.save();
+          ctx.translate((ABX - 7) * S, (cy + 3) * S); // hand pivot, lower-left of the block
+          ctx.rotate(phi);
+          ctx.fillStyle = color;
+          ctx.fillText("⛏︎", 0, -4 * S); // glyph sits above the pivot; ︎ = flat/tintable
+          ctx.restore();
+        };
+        drawPick(TOPB + BLOCK / 2, topC);
+        drawPick(BOTB + BLOCK / 2, botC);
+        ctx.restore();
+      }
 
       // transactions being taken to the blocks, drawn on top (mempool colour kept).
       // no worker tag — the destination block already shows which miner grabs it.
