@@ -502,14 +502,12 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         n.t -= dt / 1000;
         if (n.t <= 0) {
           n.t = rnd(0.7, 1.6);
-          // fan attention onto a few pool transactions at once
+          // a single ambient ray onto a pool transaction (kept sparse on purpose)
           n.targets = [];
-          for (let j = 0; j < 3; j++) {
-            const pi = (Math.random() * txs.length) | 0;
-            if (txs[pi] && txs[pi].phase === "pool") {
-              txs[pi].flash = 300;
-              n.targets.push(pi);
-            }
+          const pi = (Math.random() * txs.length) | 0;
+          if (txs[pi] && txs[pi].phase === "pool") {
+            txs[pi].flash = 300;
+            n.targets.push(pi);
           }
         }
       }
@@ -614,12 +612,22 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
       frame(ABX, BOTB, BLOCK, botC);
       header(ABX, BOTB, roundPHbars, nonceBotBars);
-      // miner glyphs (pickaxe), animated while hashing
-      const tick = hashing && R(phaseT / 70) % 2 ? 1 : 0;
-      rect(ABX - 7, TOPB + BLOCK / 2 - 2 + tick, 3, 3, topC);
-      rect(ABX - 9, TOPB + BLOCK / 2 + 2, 6, 1, topC);
-      rect(ABX - 7, BOTB + BLOCK / 2 - 2 + tick, 3, 3, botC);
-      rect(ABX - 9, BOTB + BLOCK / 2 + 2, 6, 1, botC);
+      // miner pickaxe — swings up and chops down at the block while hashing
+      const pick = (cy: number, color: string) => {
+        const s = hashing ? Math.sin(phaseT / 60) : -0.55; // -1 raised … +1 chop
+        const hx = ABX - 11;
+        const hy = cy - 1; // hand pivot (fixed, to the left)
+        const ex = ABX - 3;
+        const ey = R(cy + s * 4); // head end swings toward the block
+        for (let i = 1; i <= 7; i++) {
+          const t = i / 7; // solid handle from hand to head
+          rect(R(hx + (ex - hx) * t), R(hy + (ey - hy) * t), 1, 1, color);
+        }
+        rect(ex - 1, ey - 1, 2, 2, color); // pick head
+        rect(ex + 1, ey, 1, 1, color); // tip pointing at the block
+      };
+      pick(TOPB + BLOCK / 2, topC);
+      pick(BOTB + BLOCK / 2, botC);
 
       // transactions being taken to the blocks, drawn on top (mempool colour kept).
       // no worker tag — the destination block already shows which miner grabs it.
@@ -666,16 +674,17 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         const [px, py] = partPt(verifying, checkStage);
         for (const n of nodes) pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
       } else {
-        // ambient: each node fans a few rays over pool transactions
+        // ambient: one faint ray per node onto a pool transaction
         for (const n of nodes)
           for (const ti of n.targets) {
             const t = txs[ti];
-            if (t && t.phase === "pool") pixLine(n.x + 2, n.y + 4, t.x + 1, t.y + 1, "rgba(91,155,213,0.5)");
+            if (t && t.phase === "pool") pixLine(n.x + 2, n.y + 4, t.x + 1, t.y + 1, "rgba(91,155,213,0.45)");
           }
-        // and every INCOMING transaction gets checked — a ray from the nearest node
+        // incoming transactions get a bit more attention — a single bright ray from
+        // the nearest node to every tx that's still flying in, so each is checked on arrival
         for (const t of txs) {
           if (t.phase !== "in" || t.x >= CW || t.x <= -TX) continue;
-          let bn = nodes[0];
+          let bn = null;
           let bd = Infinity;
           for (const n of nodes) {
             const d = (n.x - t.x) ** 2 + (n.y - t.y) ** 2;
@@ -684,7 +693,21 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
               bn = n;
             }
           }
-          pixLine(bn.x + 2, bn.y + 4, t.x + 1, t.y + 1, "rgba(122,201,240,0.85)");
+          if (bn) pixLine(bn.x + 2, bn.y + 4, t.x + 1, t.y + 1, "rgba(122,201,240,0.9)");
+        }
+      }
+
+      // attention ray from the grey prev-hash barcode to the block it's calculated
+      // from (the current chain tip) — shows the hash links back to that block
+      const tip = blocks[0];
+      if (tip) {
+        const tcx = tip.x + BLOCK / 2;
+        const tcy = tip.y + BLOCK / 2;
+        const phRay = (bx: number, by: number) => pixLine(bx + 7, by - 4, tcx, tcy, "rgba(180,180,180,0.5)");
+        if (verifying) phRay(verifying.x, verifying.y);
+        else if (st.phase === "gather" || st.phase === "hash" || st.phase === "found") {
+          phRay(ABX, TOPB);
+          phRay(ABX, BOTB);
         }
       }
       // node bodies (on top of their own beams)
