@@ -593,19 +593,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         rect(t.x, t.y, PX, PX, t.flash > 0 ? "#eef3ee" : feeToColor(t.fee));
       }
 
-      // node robots + scan beams (aim at the block under check while verifying)
-      for (const n of nodes) {
-        if (verifying && checkStage >= 0) {
-          const [px, py] = partPt(verifying, checkStage);
-          pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
-        } else if (n.target >= 0 && txs[n.target] && txs[n.target].phase === "pool") {
-          pixLine(n.x + 2, n.y + 4, txs[n.target].x + 1, txs[n.target].y + 1, "rgba(91,155,213,0.7)");
-        }
-        rect(n.x, n.y, 4, 4, blue);
-        rect(n.x, n.y - 1, 1, 1, faint);
-        rect(n.x + 3, n.y - 1, 1, 1, faint);
-        rect(n.x + 1, n.y + 1, 1, 1, accent);
-      }
+      // (node robots are drawn later, on top of the blocks, so while verifying they
+      // hover in front of the winning block instead of vanishing behind it)
 
       // two miners racing — top (magenta), bottom (blue) — always on screen
       const hashing = st.phase === "hash";
@@ -627,15 +616,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       rect(ABX - 9, BOTB + BLOCK / 2 + 2, 6, 1, botC);
 
       // transactions being taken to the blocks, drawn on top (mempool colour kept).
-      // while still over the pool, each is tagged in the claiming worker's colour —
-      // magenta band (top miner) and/or blue band (bottom miner). a shared tx shows
-      // both; a tx unique to one miner shows only that one.
+      // no worker tag — the destination block already shows which miner grabs it.
       for (const c of copies) rect(c.x, c.y, PX, PX, feeToColor(c.fee));
-      for (const c of copies) {
-        if (c.phase === "fall") continue; // already a block pixel
-        if (c.mb === 0) rect(c.x, c.y, PX, 1, magenta); // top miner claims it
-        else rect(c.x, c.y + PX - 1, PX, 1, blue); // bottom miner claims it
-      }
 
       // chain blocks (winner's colour outline) + 1px links
       for (let i = blocks.length - 1; i >= 0; i--) {
@@ -669,6 +651,21 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           if (s < checkStage) box(bx, by, bw, bh, green); // passed
           else if (s === checkStage) box(bx, by, bw, bh, pulse ? "#eef3ee" : accent); // checking now
         }
+      }
+
+      // node robots + scan beams — drawn on top of the blocks so a checking node
+      // hovers in front of the winning block rather than slipping behind it
+      for (const n of nodes) {
+        if (verifying && checkStage >= 0) {
+          const [px, py] = partPt(verifying, checkStage);
+          pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
+        } else if (n.target >= 0 && txs[n.target] && txs[n.target].phase === "pool") {
+          pixLine(n.x + 2, n.y + 4, txs[n.target].x + 1, txs[n.target].y + 1, "rgba(91,155,213,0.7)");
+        }
+        rect(n.x, n.y, 4, 4, blue);
+        rect(n.x, n.y - 1, 1, 1, faint);
+        rect(n.x + 3, n.y - 1, 1, 1, faint);
+        rect(n.x + 1, n.y + 1, 1, 1, accent);
       }
 
       // winner sparks on top, fading out over their life
