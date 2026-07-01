@@ -56,7 +56,7 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
   block: {
     title: "a block",
     term: "a batch of transactions",
-    body: "Each pixel is one transaction. The two bars on top are the block header: the left one is the previous block's hash (fixed — it's the link back), the right one is the nonce, which the miner keeps changing until the hash comes out right.",
+    body: "Each pixel is one transaction. The two little barcodes on top are the block header — a hash is a long string of values, drawn here as a strip of colours: the left one is the previous block's hash (fixed — it's the link back), the right one scrambles as the miner tries nonces, until the hash comes out right.",
   },
   chain: {
     title: "the blockchain",
@@ -97,8 +97,9 @@ type Copy = {
 };
 // a celebratory pixel spark, burst when a miner wins the block
 type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string };
-// a block header: ph = prev-block-hash swatch (fixed), nonce = the nonce swatch
-type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string; nonce: string };
+// a block header: ph = prev-block-hash barcode (fixed), nonce = the nonce barcode.
+// each is a little strip of colour bars, standing in for a hash's many hex digits.
+type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string[]; nonce: string[] };
 type Node = { x: number; y: number; vx: number; vy: number; t: number; target: number };
 type Status = { phase: "idle" | "gather" | "hash" | "found" | "verify"; winner: number }; // winner: -1 none, 0 magenta, 1 blue
 
@@ -107,6 +108,8 @@ const randFee = (intro: boolean) => Math.random() ** 2 * (intro ? 40 : 130) + 1;
 // header swatches stand in for the 256-bit header fields, shown as colour
 const hsl = (h: number, s: number, l: number) => `hsl(${Math.round(h)}, ${s}%, ${l}%)`;
 const randHue = () => Math.random() * 360;
+const HBARS = 6; // colour bars per hash field — a tiny "barcode" of a hash
+const makeBars = () => Array.from({ length: HBARS }, () => hsl(randHue(), 55 + Math.random() * 25, 46 + Math.random() * 20));
 
 export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const intro = mode === "intro";
@@ -204,11 +207,11 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     const STAGGER = 16; // ms between transactions leaving the mempool
     const GRAV = 1500; // fall acceleration (px/s²)
 
-    // header swatches — prev-hash is shared by both miners (same chain tip) and
-    // stays fixed for the round; each miner's nonce drifts while it hashes.
-    let roundPHHue = randHue();
-    let nonceTopHue = randHue();
-    let nonceBotHue = randHue();
+    // header barcodes — prev-hash is shared by both miners (same chain tip) and
+    // stays fixed for the round; each miner's nonce barcode scrambles while it hashes.
+    let roundPHbars = makeBars();
+    let nonceTopBars = makeBars();
+    let nonceBotBars = makeBars();
     // the winning block, after it leaves a miner and before it joins the chain:
     // it slides to centre stage where the nodes check its 3 parts.
     let verifying: Blk | null = null;
@@ -229,7 +232,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     // seed history (alternating winner colours), each with its own header swatches
     for (let i = 0; i < (intro ? 4 : 7); i++) {
       const x = CHAIN_RIGHT - i * PITCH;
-      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: hsl(randHue(), 52, 50), nonce: hsl(randHue(), 60, 55) });
+      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: makeBars(), nonce: makeBars() });
     }
     // seed a visible mempool pile
     const seedPool = Math.min(memTarget, intro ? 150 : 190);
@@ -240,6 +243,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     let spawnAcc = 0;
     let phaseT = 0;
+    let scrambleT = 0; // throttles the nonce-barcode scramble while hashing
     const st = statusRef.current;
     st.phase = "idle";
     // a miner confirms TOTAL txs each full cycle (~9.3s intro / ~6.5s outro), so
@@ -271,7 +275,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
       stackTop.fill(0);
       stackBot.fill(0);
-      roundPHHue = randHue(); // new chain tip → new prev-hash for both miners
+      roundPHbars = makeBars(); // new chain tip → new prev-hash barcode for both miners
       copies.length = 0;
       // both miners grab the top-fee transactions, so they mostly agree — but at
       // the margin each keeps a few the other doesn't (a realistic, almost-same diff)
@@ -317,8 +321,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       const wf = st.winner === 0 ? formingTop : formingBot;
       const color = st.winner === 0 ? magenta : blue;
       const startY = st.winner === 0 ? TOPB : BOTB;
-      const nh = st.winner === 0 ? nonceTopHue : nonceBotHue; // the winning nonce, frozen
-      verifying = { x: ABX, tx: VERIFY_X, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee), ph: hsl(roundPHHue, 52, 50), nonce: hsl(nh, 60, 55) };
+      const nb = st.winner === 0 ? nonceTopBars : nonceBotBars; // the winning nonce, frozen
+      verifying = { x: ABX, tx: VERIFY_X, y: startY, ty: MID, color, pixels: wf.map((f) => f.fee), ph: roundPHbars.slice(), nonce: nb.slice() };
       formingTop.forEach((f) => ((f.fee = 0), (f.filled = false)));
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
       copies.length = 0;
@@ -387,10 +391,15 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         }
       }
 
-      // while hashing, each miner keeps trying nonces → its nonce swatch drifts
-      if (st.phase === "hash") {
-        nonceTopHue = (nonceTopHue + rnd(4, 12)) % 360;
-        nonceBotHue = (nonceBotHue + rnd(4, 12)) % 360;
+      // while hashing, each miner keeps trying nonces → its barcode scrambles
+      // (throttled so it reads as searching, not strobing; skipped for reduce-motion)
+      if (st.phase === "hash" && !reduced) {
+        scrambleT += dt;
+        if (scrambleT >= 100) {
+          scrambleT = 0;
+          nonceTopBars = makeBars();
+          nonceBotBars = makeBars();
+        }
       }
       // the winning block easing toward centre stage (and later the chain tip)
       if (verifying) {
@@ -553,10 +562,12 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         rect(x + 2 + (i % BN) * TX, y + 2 + Math.floor(i / BN) * TX, PX, PX, filled ? feeToColor(pixels[i] || 1) : "#15171f");
       }
     };
-    // two swatches sitting on top of a block: prev-block-hash (left) + nonce (right)
-    const header = (x: number, y: number, ph: string, nonce: string) => {
-      rect(x + 1, y - 5, 12, 3, ph);
-      rect(x + 15, y - 5, 12, 3, nonce);
+    // two little barcodes on top of a block: prev-block-hash (left) + nonce (right),
+    // each a strip of HBARS colour bars evoking a hash's many varied digits
+    const HBW = 12 / HBARS; // width of one bar
+    const header = (x: number, y: number, ph: string[], nonce: string[]) => {
+      for (let i = 0; i < HBARS; i++) rect(x + 1 + i * HBW, y - 5, HBW, 3, ph[i]);
+      for (let i = 0; i < HBARS; i++) rect(x + 15 + i * HBW, y - 5, HBW, 3, nonce[i]);
     };
     // 1px rectangle outline (rectangular sibling of frame)
     const box = (x: number, y: number, w: number, h: number, c: string) => {
@@ -604,10 +615,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       const botC = blue;
       blockPixels(ABX, TOPB, formingTop.map((f) => f.fee), (i) => formingTop[i].filled);
       frame(ABX, TOPB, BLOCK, topC);
-      header(ABX, TOPB, hsl(roundPHHue, 52, 50), hsl(nonceTopHue, 62, 56)); // same prev-hash, own nonce
+      header(ABX, TOPB, roundPHbars, nonceTopBars); // same prev-hash, own nonce
       blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
       frame(ABX, BOTB, BLOCK, botC);
-      header(ABX, BOTB, hsl(roundPHHue, 52, 50), hsl(nonceBotHue, 62, 56));
+      header(ABX, BOTB, roundPHbars, nonceBotBars);
       // miner glyphs (pickaxe), animated while hashing
       const tick = hashing && R(phaseT / 70) % 2 ? 1 : 0;
       rect(ABX - 7, TOPB + BLOCK / 2 - 2 + tick, 3, 3, topC);
