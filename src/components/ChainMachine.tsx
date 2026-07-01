@@ -19,8 +19,8 @@ const PX = TX - 0.5; // pixel fills the cell leaving exactly a 1px gap at 2×
 const BN = 6; // block is BN×BN transactions
 const TOTAL = BN * BN;
 const BLOCK = BN * TX + 4;
-const LINK = 12;
-const PITCH = BLOCK + LINK;
+const LINK = 8; // chain-link gap; tighter so more blocks fit and one always
+const PITCH = BLOCK + LINK; // bleeds off the left edge (history continues off-screen)
 
 const ASSEM_X = 208;
 const ASSEM_Y = 96;
@@ -233,7 +233,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     }));
 
     // seed history (alternating winner colours), each with its own header swatches
-    for (let i = 0; i < (intro ? 4 : 7); i++) {
+    for (let i = 0; i < (intro ? 6 : 8); i++) {
       const x = CHAIN_RIGHT - i * PITCH;
       blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: makeGreyBars(ZEROS), nonce: makeBars(ZEROS) });
     }
