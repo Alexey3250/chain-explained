@@ -100,7 +100,7 @@ type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: 
 // a block header: ph = prev-block-hash barcode (fixed), nonce = the nonce barcode.
 // each is a little strip of colour bars, standing in for a hash's many hex digits.
 type Blk = { x: number; tx: number; y: number; ty: number; color: string; pixels: number[]; ph: string[]; nonce: string[] };
-type Node = { x: number; y: number; vx: number; vy: number; t: number; targets: number[] };
+type Node = { x: number; y: number; vx: number; vy: number };
 type Status = { phase: "idle" | "gather" | "hash" | "found" | "verify"; winner: number }; // winner: -1 none, 0 magenta, 1 blue
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -228,8 +228,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       y: rnd(8, NODE_Y1),
       vx: rnd(-11, 11),
       vy: rnd(-7, 7),
-      t: rnd(0, 2),
-      targets: [],
     }));
 
     // seed history (alternating winner colours), each with its own header swatches
@@ -247,6 +245,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     let spawnAcc = 0;
     let phaseT = 0;
     let scrambleT = 0; // throttles the nonce-barcode scramble while hashing
+    let swingT = 0; // drives the pickaxe swing while hashing
+    const SWING_MS = 340; // one full pickaxe swing (chop at the midpoint)
     const st = statusRef.current;
     st.phase = "idle";
     // a miner confirms TOTAL txs each full cycle (~9.3s intro / ~6.5s outro), so
@@ -316,6 +316,17 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         const r = Math.random();
         const c = r < 0.4 ? "#eef3ee" : r < 0.7 ? color : accent; // sparkle, winner colour, accent
         sparks.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - rnd(10, 55), life, max: life, color: c });
+      }
+    };
+
+    // one or two tiny sparks where a pickaxe strikes
+    const strikeSparks = (cx: number, cy: number) => {
+      const nn = 1 + ((Math.random() * 2) | 0);
+      for (let i = 0; i < nn; i++) {
+        const a = -Math.PI / 2 + rnd(-0.9, 0.9); // fly upward-ish off the strike
+        const sp = rnd(18, 46);
+        const life = rnd(180, 380);
+        sparks.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life, max: life, color: Math.random() < 0.5 ? "#eef3ee" : accent });
       }
     };
 
@@ -404,6 +415,16 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           nonceBotBars = makeBars();
         }
       }
+      // pickaxe swing — advance it while hashing and throw sparks at each strike (midpoint)
+      if (st.phase === "hash") {
+        const prevP = (swingT % SWING_MS) / SWING_MS;
+        swingT += dt;
+        const p = (swingT % SWING_MS) / SWING_MS;
+        if (prevP < 0.5 && p >= 0.5 && !reduced) {
+          strikeSparks(ABX - 2, TOPB + BLOCK / 2 + 3);
+          strikeSparks(ABX - 2, BOTB + BLOCK / 2 + 3);
+        }
+      }
       // the winning block easing toward centre stage (and later the chain tip)
       if (verifying) {
         const e = Math.min(1, k * 3);
@@ -485,7 +506,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           const oy = verifying.y + BLOCK / 2 - 2 + Math.sin(ang) * 20;
           n.x += (ox - n.x) * Math.min(1, k * 4);
           n.y += (oy - n.y) * Math.min(1, k * 4);
-          n.targets = [];
           continue;
         }
         n.x += n.vx * k;
@@ -498,17 +518,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         } else if (n.y > NODE_Y1) {
           n.vy = -Math.abs(n.vy);
           n.y += (NODE_Y1 - n.y) * Math.min(1, k * 2.5); // ease back after swarming
-        }
-        n.t -= dt / 1000;
-        if (n.t <= 0) {
-          n.t = rnd(0.7, 1.6);
-          // a single ambient ray onto a pool transaction (kept sparse on purpose)
-          n.targets = [];
-          const pi = (Math.random() * txs.length) | 0;
-          if (txs[pi] && txs[pi].phase === "pool") {
-            txs[pi].flash = 300;
-            n.targets.push(pi);
-          }
         }
       }
 
@@ -612,19 +621,24 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       blockPixels(ABX, BOTB, formingBot.map((f) => f.fee), (i) => formingBot[i].filled);
       frame(ABX, BOTB, BLOCK, botC);
       header(ABX, BOTB, roundPHbars, nonceBotBars);
-      // miner pickaxe — swings up and chops down at the block while hashing
+      // miner pickaxe (the ⛏ icon, drawn in pixels) — a handle + curved head that
+      // swings up and chops down toward the block while hashing
       const pick = (cy: number, color: string) => {
-        const s = hashing ? Math.sin(phaseT / 60) : -0.55; // -1 raised … +1 chop
-        const hx = ABX - 11;
-        const hy = cy - 1; // hand pivot (fixed, to the left)
-        const ex = ABX - 3;
-        const ey = R(cy + s * 4); // head end swings toward the block
-        for (let i = 1; i <= 7; i++) {
-          const t = i / 7; // solid handle from hand to head
-          rect(R(hx + (ex - hx) * t), R(hy + (ey - hy) * t), 1, 1, color);
-        }
-        rect(ex - 1, ey - 1, 2, 2, color); // pick head
-        rect(ex + 1, ey, 1, 1, color); // tip pointing at the block
+        const s = hashing ? -Math.cos(((swingT % SWING_MS) / SWING_MS) * Math.PI * 2) : -0.6; // -1 raised … +1 chop
+        const phi = 0.2 + s * 0.7; // rotation about the hand
+        const cph = Math.cos(phi);
+        const sph = Math.sin(phi);
+        const px0 = ABX - 8; // hand pivot (lower-left)
+        const py0 = cy + 5;
+        const plot = (lx: number, ly: number) => rect(R(px0 + lx * cph - ly * sph), R(py0 + lx * sph + ly * cph), 1, 1, color);
+        plot(0, -2); // handle (up from the hand)
+        plot(0, -4);
+        plot(0, -6);
+        plot(-2, -6); // curved pick head with two points
+        plot(-1, -7);
+        plot(0, -8);
+        plot(1, -7);
+        plot(2, -6);
       };
       pick(TOPB + BLOCK / 2, topC);
       pick(BOTB + BLOCK / 2, botC);
@@ -674,14 +688,8 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         const [px, py] = partPt(verifying, checkStage);
         for (const n of nodes) pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
       } else {
-        // ambient: one faint ray per node onto a pool transaction
-        for (const n of nodes)
-          for (const ti of n.targets) {
-            const t = txs[ti];
-            if (t && t.phase === "pool") pixLine(n.x + 2, n.y + 4, t.x + 1, t.y + 1, "rgba(91,155,213,0.45)");
-          }
-        // incoming transactions get a bit more attention — a single bright ray from
-        // the nearest node to every tx that's still flying in, so each is checked on arrival
+        // rays only for INCOMING transactions — the nearest node beams at every tx
+        // that's still flying in, so nodes check them on arrival (no ambient clutter)
         for (const t of txs) {
           if (t.phase !== "in" || t.x >= CW || t.x <= -TX) continue;
           let bn = null;
