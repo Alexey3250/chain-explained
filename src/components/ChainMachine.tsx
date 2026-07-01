@@ -421,8 +421,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         swingT += dt;
         const p = (swingT % SWING_MS) / SWING_MS;
         if (prevP < 0.5 && p >= 0.5 && !reduced) {
-          strikeSparks(ABX - 2, TOPB + BLOCK / 2 + 3);
-          strikeSparks(ABX - 2, BOTB + BLOCK / 2 + 3);
+          // sparks fly off the pickaxe HEAD where it meets the block's left edge
+          strikeSparks(ABX - 1, TOPB + BLOCK / 2 - 2);
+          strikeSparks(ABX - 1, BOTB + BLOCK / 2 - 2);
         }
       }
       // the winning block easing toward centre stage (and later the chain tip)
@@ -686,22 +687,14 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       if (verifying && checkStage >= 0) {
         // verifying: every node fixes its attention on the part being checked
         const [px, py] = partPt(verifying, checkStage);
-        for (const n of nodes) pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.85)");
+        for (const n of nodes) pixLine(n.x + 2, n.y + 4, px, py, "rgba(91,155,213,0.4)");
       } else {
-        // rays only for INCOMING transactions — the nearest node beams at every tx
-        // that's still flying in, so nodes check them on arrival (no ambient clutter)
+        // faint rays only for INCOMING transactions — the checking is shared across
+        // all nodes (assigned by slot) so no single node does all the work
         for (const t of txs) {
           if (t.phase !== "in" || t.x >= CW || t.x <= -TX) continue;
-          let bn = null;
-          let bd = Infinity;
-          for (const n of nodes) {
-            const d = (n.x - t.x) ** 2 + (n.y - t.y) ** 2;
-            if (d < bd) {
-              bd = d;
-              bn = n;
-            }
-          }
-          if (bn) pixLine(bn.x + 2, bn.y + 4, t.x + 1, t.y + 1, "rgba(122,201,240,0.9)");
+          const n = nodes[t.slot % nodes.length];
+          pixLine(n.x + 2, n.y + 4, t.x + 1, t.y + 1, "rgba(122,201,240,0.4)");
         }
       }
 
