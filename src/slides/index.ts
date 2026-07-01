@@ -5,6 +5,7 @@ import Hash from "./03-hash";
 import KeysSlide from "./04-keys";
 import Transactions from "./05-transactions";
 import Blocks from "./06-blocks";
+import Merkle from "./06c-merkle";
 import Mining from "./07-mining";
 import ChainDemo from "./08-chain";
 import Network from "./09-network";
@@ -26,6 +27,7 @@ export const slides: Slide[] = [
   { id: "keys", title: "Keys & signatures", chapter: "Foundations", Component: KeysSlide },
   { id: "transactions", title: "Transactions", chapter: "Money", Component: Transactions },
   { id: "blocks", title: "Blocks", chapter: "Money", Component: Blocks },
+  { id: "merkle", title: "The Merkle tree", chapter: "Money", Component: Merkle },
   { id: "mining", title: "Proof of work", chapter: "Consensus", Component: Mining },
   { id: "chain", title: "Immutability", chapter: "Consensus", Component: ChainDemo },
   { id: "network", title: "The network", chapter: "Consensus", Component: Network },
