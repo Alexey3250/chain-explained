@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { feeToColor } from "@/lib/fee";
 import { sha256 } from "@/lib/sha256";
+import { digitColor, H01, H23, HASH_OF, LEAF, PREV, ROOT } from "@/lib/merkle";
 
 /* =====================================================================
    A Merkle tree, zoomed in and honest, in our flat / barcode language.
@@ -19,38 +20,7 @@ import { sha256 } from "@/lib/sha256";
        hash starts with enough white-stripe zeros.
    ===================================================================== */
 
-// ---- honest data: real SHA-256 all the way up ----
-const TX_DATA = [
-  "Tx0 · alice → bob · 0.10",
-  "Tx1 · carol → dave · 0.42",
-  "Tx2 · erin → frank · 1.05",
-  "Tx3 · gary → heidi · 0.08",
-];
-const LEAF = TX_DATA.map((d) => sha256(d)); // Hash0..Hash3
-const H01 = sha256(LEAF[0] + LEAF[1]);
-const H23 = sha256(LEAF[2] + LEAF[3]);
-const ROOT = sha256(H01 + H23);
-const PREV = sha256("block header 839,145"); // previous block's hash
-const HASH_OF: Record<string, string> = {
-  h0: LEAF[0],
-  h1: LEAF[1],
-  h2: LEAF[2],
-  h3: LEAF[3],
-  h01: H01,
-  h23: H23,
-  root: ROOT,
-};
-
 const TARGET = "0000"; // mined block hash must start with this many hex zeros
-
-/** One stripe per hex character. '0' → white (a zero). Otherwise a colour
-    keyed to the digit, so the same digit is always the same colour. */
-function digitColor(ch: string, grey = false): string {
-  const d = parseInt(ch, 16);
-  if (d === 0) return "#ffffff";
-  if (grey) return `hsl(0, 0%, ${30 + d * 3}%)`;
-  return `hsl(${Math.round(((d - 1) / 14) * 320)}, 64%, 55%)`;
-}
 
 const C = {
   fg: "var(--fg)",
