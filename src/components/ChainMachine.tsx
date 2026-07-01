@@ -136,7 +136,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const io = new IntersectionObserver((e) => (visibleRef.current = e[0].isIntersecting), { threshold: 0.05 });
+    const io = new IntersectionObserver((e) => (visibleRef.current = e[0].isIntersecting), { threshold: 0 });
     io.observe(el);
     return () => io.disconnect();
   }, []);
@@ -154,7 +154,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   // mirror the mining status into React for the overlay — only when it actually
   // changes, so we don't re-render the whole component 10×/second for nothing
   useEffect(() => {
-    if (reduced) return;
     let lastPhase = "";
     let lastWinner = -2;
     const id = setInterval(() => {
@@ -167,7 +166,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       }
     }, 100);
     return () => clearInterval(id);
-  }, [reduced]);
+  }, []);
 
   // simulation
   useEffect(() => {
@@ -370,7 +369,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
           st.phase = "found";
           st.winner = Math.random() < 0.5 ? 0 : 1; // first to a valid hash
           const wy = st.winner === 0 ? TOPB : BOTB;
-          burstSparks(ABX + BLOCK / 2, wy + BLOCK / 2, st.winner === 0 ? magenta : blue); // celebrate the win
+          if (!reduced) burstSparks(ABX + BLOCK / 2, wy + BLOCK / 2, st.winner === 0 ? magenta : blue); // celebrate the win (skip under reduce-motion)
           phaseT = 0;
         }
       } else if (st.phase === "found") {
@@ -684,13 +683,6 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     let last = 0;
     let acc = 0;
     const FRAME = 1000 / 60; // cap the sim+draw at ~60fps regardless of refresh rate
-
-    if (reduced) {
-      for (let i = 0; i < 80; i++) spawnTx();
-      for (let s = 0; s < 220; s++) step(16);
-      draw();
-      return;
-    }
 
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
