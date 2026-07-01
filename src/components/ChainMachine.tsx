@@ -56,7 +56,7 @@ const MAP: Record<Region, { title: string; term: string; body: string }> = {
   block: {
     title: "a block",
     term: "a batch of transactions",
-    body: "Each pixel is one transaction. The two little barcodes on top are the block header — a hash is a long string of values, drawn here as a strip of colours: the left one is the previous block's hash (fixed — it's the link back), the right one scrambles as the miner tries nonces, until the hash comes out right.",
+    body: "Each pixel is one transaction. The two little barcodes on top are the block header — a hash is a long string of values, drawn here as a strip of colours. The left one is the previous block's hash (the link back); the right one scrambles as the miner tries nonces. A hash only counts as valid once it starts with a run of zeros — shown here as white bars — which is the work miners race to find.",
   },
   chain: {
     title: "the blockchain",
@@ -108,11 +108,13 @@ const randFee = (intro: boolean) => Math.random() ** 2 * (intro ? 40 : 130) + 1;
 // header swatches stand in for the 256-bit header fields, shown as colour
 const hsl = (h: number, s: number, l: number) => `hsl(${Math.round(h)}, ${s}%, ${l}%)`;
 const randHue = () => Math.random() * 360;
-const HBARS = 6; // bars per hash field — a tiny "barcode" of a hash
-// colour barcode for the nonce (it scrambles), grey barcode for the prev-hash
-// (fixed) so the two header fields read as clearly different things
-const makeBars = () => Array.from({ length: HBARS }, () => hsl(randHue(), 55 + Math.random() * 25, 46 + Math.random() * 20));
-const makeGreyBars = () => Array.from({ length: HBARS }, () => hsl(0, 0, 34 + Math.random() * 48));
+const HBARS = 12; // many thin bars per hash field — a hash is a long, complex value
+const ZEROS = 3; // leading white bars = the leading zeros that make a hash valid
+const WHITE = "#ffffff"; // a "zero" digit
+// colour barcode for the nonce (it scrambles), grey barcode for the prev-hash so the
+// two header fields read differently; the first `zeros` bars are white (leading zeros)
+const makeBars = (zeros = 0) => Array.from({ length: HBARS }, (_, i) => (i < zeros ? WHITE : hsl(randHue(), 55 + Math.random() * 25, 46 + Math.random() * 20)));
+const makeGreyBars = (zeros = 0) => Array.from({ length: HBARS }, (_, i) => (i < zeros ? WHITE : hsl(0, 0, 34 + Math.random() * 48)));
 
 export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
   const intro = mode === "intro";
@@ -212,7 +214,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
 
     // header barcodes — prev-hash is shared by both miners (same chain tip) and
     // stays fixed for the round; each miner's nonce barcode scrambles while it hashes.
-    let roundPHbars = makeGreyBars();
+    let roundPHbars = makeGreyBars(ZEROS); // prev-hash is a valid block hash → leading zeros
     let nonceTopBars = makeBars();
     let nonceBotBars = makeBars();
     // the winning block, after it leaves a miner and before it joins the chain:
@@ -233,7 +235,7 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
     // seed history (alternating winner colours), each with its own header swatches
     for (let i = 0; i < (intro ? 4 : 7); i++) {
       const x = CHAIN_RIGHT - i * PITCH;
-      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: makeGreyBars(), nonce: makeBars() });
+      blocks.push({ x, tx: x, y: MID, ty: MID, color: i % 2 ? blue : magenta, pixels: Array.from({ length: TOTAL }, () => randFee(intro)), ph: makeGreyBars(ZEROS), nonce: makeBars(ZEROS) });
     }
     // seed a visible mempool pile
     const seedPool = Math.min(memTarget, intro ? 150 : 190);
@@ -278,7 +280,9 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
       formingBot.forEach((f) => ((f.fee = 0), (f.filled = false)));
       stackTop.fill(0);
       stackBot.fill(0);
-      roundPHbars = makeGreyBars(); // new chain tip → new prev-hash barcode for both miners
+      roundPHbars = makeGreyBars(ZEROS); // new chain tip → new prev-hash (with leading zeros)
+      nonceTopBars = makeBars(); // both miners start searching again — no leading zeros yet
+      nonceBotBars = makeBars();
       copies.length = 0;
       // both miners grab the top-fee transactions, so they mostly agree — but at
       // the margin each keeps a few the other doesn't (a realistic, almost-same diff)
@@ -386,6 +390,10 @@ export default function ChainMachine({ mode }: { mode: "intro" | "outro" }) {
         if (phaseT >= HASH_MS) {
           st.phase = "found";
           st.winner = Math.random() < 0.5 ? 0 : 1; // first to a valid hash
+          // the winning hash now starts with the required leading zeros (white bars);
+          // the loser's stays random (it never hit the target)
+          if (st.winner === 0) nonceTopBars = makeBars(ZEROS);
+          else nonceBotBars = makeBars(ZEROS);
           const wy = st.winner === 0 ? TOPB : BOTB;
           if (!reduced) burstSparks(ABX + BLOCK / 2, wy + BLOCK / 2, st.winner === 0 ? magenta : blue); // celebrate the win (skip under reduce-motion)
           phaseT = 0;
